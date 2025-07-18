@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GetSimpl/gotel/examples/httpserver/server"
 	"github.com/GetSimpl/gotel/pkg/config"
-	"github.com/GetSimpl/gotel/pkg/server"
 )
 
 func main() {

@@ -4,7 +4,7 @@ GoTel is a production-ready Go package for publishing metrics directly to Promet
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Go Module](https://img.shields.io/badge/module-github.com%2Fswagftw%2Fgotel--metrics-blue)](https://github.com/GetSimpl/gotel)
+[![Go Module](https://img.shields.io/badge/module-github.com%2FGetSimpl%2Fgotel-blue)](https://github.com/GetSimpl/gotel)
 
 ## Overview
 
@@ -17,21 +17,14 @@ GoTel transforms the traditional pull-based metrics pattern into a modern push-b
 - **🚀 Zero Dependencies**: No collector, agent, or middleware required
 - **🔧 Production Ready**: Used by teams for high-throughput applications
 
-## Architecture
-
-- **Go Package**: Clean API with `gotel.New()`, `Counter()`, `Gauge()`, and `SendMetrics()` methods
-- **Unified Config**: Viper-based configuration with environment variables and sensible defaults
-- **Direct Push**: Optimized HTTP transport with Protocol Buffers + Snappy compression
-- **Local Stack**: Docker Compose setup for development and testing
-
 ## Key Features
 
-- **🔥 True Real-time**: Metrics sent immediately, no batching delays
+- **🔥 True Real-time**: Metrics sent immediately with configurable async/sync modes
 - **📈 Direct Push**: No middleware/collector dependencies  
-- **💪 Production Resilient**: Exponential backoff retries for 429 and 5xx errors
+- **💪 Production Resilient**: Rate limiting (1ms default) prevents duplicate timestamp errors
 - **⚡ Optimized Transport**: Protocol buffers + snappy compression + connection pooling
 - **🧵 Thread-Safe**: Atomic counters and concurrent-safe operations
-- **🔧 Easy Integration**: Simple API - just import and use
+- **🔧 Simple API**: Clean interface with sync/async sending options
 - **📊 Comprehensive Config**: Viper-based configuration with environment variable support
 - **🐳 Container Ready**: Docker support for local development and testing
 
@@ -47,6 +40,155 @@ go get github.com/GetSimpl/gotel
 
 ```go
 package main
+
+import (
+    "log"
+    "github.com/GetSimpl/gotel"
+)
+
+func main() {
+    // Create client with default configuration (reads from ENV)
+    client, err := gotel.NewWithDefaults()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    // Create and use metrics
+    counter := client.Counter("api_requests_total", map[string]string{
+        "service": "payment",
+        "method":  "POST",
+    })
+    counter.Inc()
+
+    gauge := client.Gauge("queue_size", map[string]string{
+        "queue": "processing",
+    })
+    gauge.Set(42.5)
+
+    // Send metrics synchronously
+    if err := client.SendMetricsSync(); err != nil {
+        log.Printf("Failed to send metrics: %v", err)
+    }
+}
+```
+
+### Async Mode with Custom Configuration
+
+```go
+package main
+
+```
+
+## API Reference
+
+### Core Methods
+
+#### Client Creation
+```go
+// Create with default configuration (reads from environment)
+client, err := gotel.NewWithDefaults()
+
+// Create with custom configuration
+cfg := &config.Config{
+    PrometheusEndpoint:  "http://localhost:9090/api/v1/write",
+    EnableAsyncMetrics:  true,
+    SendInterval:        5 * time.Second,
+    MinSendInterval:     time.Millisecond,
+    MetricBufferSize:    100,
+}
+client, err := gotel.New(cfg)
+```
+
+#### Metric Creation
+```go
+// Create counter metric
+counter := client.Counter("requests_total", map[string]string{
+    "service": "api",
+    "method":  "POST",
+})
+
+// Create gauge metric  
+gauge := client.Gauge("queue_size", map[string]string{
+    "queue": "processing",
+})
+```
+
+#### Metric Operations
+```go
+// Counter operations
+counter.Inc()           // Increment by 1
+counter.Add(5)          // Add specific value
+value := counter.Get()  // Get current value
+
+// Gauge operations
+gauge.Set(42.5)         // Set to specific value
+gauge.Inc()             // Increment by 1
+gauge.Dec()             // Decrement by 1
+gauge.Add(10.0)         // Add to current value
+value := gauge.Get()    // Get current value
+```
+
+#### Sending Metrics
+
+**Synchronous Sending (with rate limiting)**
+```go
+// Send immediately, rate limited to prevent duplicate timestamps
+err := client.SendMetricsSync()
+```
+
+**Asynchronous Sending (via buffered channel)**
+```go
+// Send via background worker, blocks if buffer is full (no metrics lost)
+client.SendMetricsAsync()
+```
+
+**Convenience Methods**
+```go
+// Automatically chooses sync/async based on configuration
+err := client.IncrementCounter("api_calls", map[string]string{
+    "endpoint": "/users",
+})
+
+err := client.SetGauge("temperature", 23.5, map[string]string{
+    "sensor": "room1",
+})
+```
+
+### Configuration
+
+GoTel uses a unified configuration system with environment variable support:
+
+```go
+type Config struct {
+    PrometheusEndpoint  string        // Prometheus remote write endpoint
+    EnableAsyncMetrics  bool          // Enable background async sending
+    SendInterval        time.Duration // Interval for periodic sends (async mode)
+    MinSendInterval     time.Duration // Rate limit interval (default: 1ms)
+    MetricBufferSize    int           // Buffer size for async channel
+    EnableDebug         bool          // Enable debug logging
+    HTTPTimeout         time.Duration // HTTP client timeout
+    MaxRetries          int           // Max retry attempts
+    RetryDelay          time.Duration // Base retry delay
+}
+```
+
+#### Environment Variables
+
+Set these environment variables for automatic configuration:
+
+```bash
+PROMETHEUS_ENDPOINT=http://localhost:9090/api/v1/write
+ENABLE_ASYNC_METRICS=true
+SEND_INTERVAL=5s
+MIN_SEND_INTERVAL=1ms
+METRIC_BUFFER_SIZE=100
+ENABLE_DEBUG=true
+HTTP_TIMEOUT=30s
+MAX_RETRIES=3
+RETRY_DELAY=1s
+```
+```
 
 import (
     "log"

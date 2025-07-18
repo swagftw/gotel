@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/GetSimpl/gotel/pkg/client"
@@ -21,6 +22,13 @@ type GoTel struct {
 	metricsRegistry  *metrics.Registry
 	ctx              context.Context
 	cancel           context.CancelFunc
+
+	// Rate limiting for metrics sending
+	lastMetricsSent time.Time
+	metricsMutex    sync.RWMutex
+
+	// Channel for async metrics sending
+	metricsChan chan struct{}
 }
 
 // New creates a new GoTel client with the provided configuration
@@ -46,6 +54,12 @@ func New(cfg *config.Config) (*GoTel, error) {
 		metricsRegistry:  metrics.NewRegistry(),
 		ctx:              ctx,
 		cancel:           cancel,
+		metricsChan:      make(chan struct{}, cfg.MetricBufferSize),
+	}
+
+	// Start background metrics worker if async is enabled
+	if cfg.EnableAsyncMetrics {
+		go gotel.metricsWorker()
 	}
 
 	if cfg.LogLevel == "debug" || cfg.EnableDebug {
@@ -73,8 +87,19 @@ func (g *GoTel) Gauge(name string, labels map[string]string) *metrics.Gauge {
 	return g.metricsRegistry.GetOrCreateGauge(name, labels)
 }
 
-// SendMetrics sends all registered metrics to Prometheus immediately
-func (g *GoTel) SendMetrics() error {
+// SendMetricsSync sends all registered metrics to Prometheus synchronously with rate limiting
+func (g *GoTel) SendMetricsSync() error {
+	g.metricsMutex.Lock()
+	defer g.metricsMutex.Unlock()
+
+	// Check if enough time has passed since last send (rate limiting)
+	now := time.Now()
+	if now.Sub(g.lastMetricsSent) < g.config.MinSendInterval {
+		return nil // Skip sending due to rate limit
+	}
+
+	g.lastMetricsSent = now
+
 	timeSeries := g.metricsRegistry.Collect()
 	if len(timeSeries) == 0 {
 		return nil
@@ -83,44 +108,11 @@ func (g *GoTel) SendMetrics() error {
 	return g.prometheusClient.SendMetrics(timeSeries)
 }
 
-// SendMetricsAsync sends metrics asynchronously in a separate goroutine
+// SendMetricsAsync sends metrics asynchronously via buffered channel with rate limiting
+// This method will block if the channel is full, ensuring no metrics are lost
 func (g *GoTel) SendMetricsAsync() {
-	go func() {
-		if err := g.SendMetrics(); err != nil {
-			if g.config.LogLevel == "debug" || g.config.EnableDebug {
-				log.Printf("Failed to send metrics: %v", err)
-			}
-		}
-	}()
-}
-
-// StartPeriodicSender starts a background goroutine that sends metrics at regular intervals
-func (g *GoTel) StartPeriodicSender(interval time.Duration) {
-	if interval <= 0 {
-		interval = 30 * time.Second // Default interval
-	}
-
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				if err := g.SendMetrics(); err != nil {
-					if g.config.LogLevel == "debug" || g.config.EnableDebug {
-						log.Printf("Periodic metrics send failed: %v", err)
-					}
-				}
-			case <-g.ctx.Done():
-				return
-			}
-		}
-	}()
-
-	if g.config.LogLevel == "debug" || g.config.EnableDebug {
-		log.Printf("Started periodic metrics sender with interval: %v", interval)
-	}
+	// Send signal to async worker, blocks if channel is full
+	g.metricsChan <- struct{}{}
 }
 
 // IncrementCounter is a convenience method to increment a counter by 1
@@ -133,7 +125,7 @@ func (g *GoTel) IncrementCounter(name string, labels map[string]string) error {
 		return nil
 	}
 
-	return g.SendMetrics()
+	return g.SendMetricsSync()
 }
 
 // SetGauge is a convenience method to set a gauge value
@@ -146,7 +138,7 @@ func (g *GoTel) SetGauge(name string, value float64, labels map[string]string) e
 		return nil
 	}
 
-	return g.SendMetrics()
+	return g.SendMetricsSync()
 }
 
 // GetRegistry returns the internal metrics registry for advanced usage
@@ -162,7 +154,7 @@ func (g *GoTel) GetConfig() *config.Config {
 // Close gracefully shuts down the GoTel client
 func (g *GoTel) Close() error {
 	// Send any remaining metrics
-	if err := g.SendMetrics(); err != nil {
+	if err := g.SendMetricsSync(); err != nil {
 		log.Printf("Failed to send final metrics: %v", err)
 	}
 
@@ -184,5 +176,52 @@ func (g *GoTel) Health() map[string]interface{} {
 		"metrics_count":       g.metricsRegistry.MetricsCount(),
 		"async_enabled":       g.config.EnableAsyncMetrics,
 		"config_valid":        g.config.Validate() == nil,
+	}
+}
+
+// metricsWorker runs in background to send metrics asynchronously with rate limiting
+func (g *GoTel) metricsWorker() {
+	ticker := time.NewTicker(g.config.SendInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-g.ctx.Done():
+			// Send final metrics before shutdown
+			g.sendMetricsWithRateLimit()
+			return
+		case <-ticker.C:
+			// Periodic send
+			g.sendMetricsWithRateLimit()
+		case <-g.metricsChan:
+			// Immediate send requested from SendMetricsAsync()
+			g.sendMetricsWithRateLimit()
+		}
+	}
+}
+
+// sendMetricsWithRateLimit sends metrics with rate limiting to prevent duplicate timestamps
+func (g *GoTel) sendMetricsWithRateLimit() {
+	g.metricsMutex.Lock()
+	defer g.metricsMutex.Unlock()
+
+	// Check if enough time has passed since last send
+	now := time.Now()
+	if now.Sub(g.lastMetricsSent) < g.config.MinSendInterval {
+		return
+	}
+
+	g.lastMetricsSent = now
+
+	// Send metrics
+	timeSeries := g.metricsRegistry.Collect()
+	if len(timeSeries) == 0 {
+		return
+	}
+
+	if err := g.prometheusClient.SendMetrics(timeSeries); err != nil {
+		if g.config.LogLevel == "debug" || g.config.EnableDebug {
+			log.Printf("Failed to send metrics: %v", err)
+		}
 	}
 }
