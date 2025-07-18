@@ -1,27 +1,38 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
-
+  external_labels:
+    cluster: '${PROMETHEUS_CLUSTER_NAME:-gotel-local}'
+    environment: '${ENVIRONMENT:-development}'
+    
 rule_files:
   # - "first_rules.yml"
   # - "second_rules.yml"
 
+# Remote write configuration (for federating to external Prometheus)
+remote_write:
+  # Uncomment to enable remote write to external Prometheus
+  # - url: '${PROMETHEUS_REMOTE_WRITE_URL:-}'
+  #   basic_auth:
+  #     username: '${PROMETHEUS_REMOTE_WRITE_USER:-}'
+  #     password: '${PROMETHEUS_REMOTE_WRITE_PASSWORD:-}'
+  #   queue_config:
+  #     max_samples_per_send: 1000
+  #     max_shards: 200
+  #     capacity: 2500
+
 scrape_configs:
-  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  # Scrape Prometheus own metrics
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
-
-  # Scrape metrics from OpenTelemetry Collector
-  - job_name: 'otel-collector'
-    static_configs:
-      - targets: ['otel-collector:8889']
-    scrape_interval: 10s
+    scrape_interval: 15s
     metrics_path: /metrics
 
-  # Scrape metrics from OpenTelemetry Collector's own metrics
-  - job_name: 'otel-collector-internal'
+  # Scrape GoTel application metrics (if running externally)
+  - job_name: 'gotel'
     static_configs:
-      - targets: ['otel-collector:8888']
-    scrape_interval: 10s
+      - targets: ['${GOTEL_SCRAPE_TARGET:-host.docker.internal:8080}']
+    scrape_interval: 5s
     metrics_path: /metrics
+    honor_labels: true
