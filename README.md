@@ -80,6 +80,50 @@ func main() {
 ```go
 package main
 
+import (
+    "log"
+    "time"
+    "github.com/GetSimpl/gotel"
+    "github.com/GetSimpl/gotel/pkg/config"
+)
+
+func main() {
+    // Create custom configuration for async mode
+    cfg := config.Default()
+    cfg.PrometheusEndpoint = "http://localhost:9090/api/v1/write"
+    cfg.EnableAsyncMetrics = true
+    cfg.SendInterval = 5 * time.Second
+    cfg.MinSendInterval = time.Millisecond
+    cfg.MetricBufferSize = 100
+    cfg.EnableDebug = true
+
+    client, err := gotel.New(cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    // Create metrics
+    counter := client.Counter("requests_total", map[string]string{
+        "service": "api",
+        "method":  "POST",
+    })
+    
+    gauge := client.Gauge("response_time_seconds", map[string]string{
+        "endpoint": "/api/users",
+    })
+
+    // Use metrics - these will be sent asynchronously
+    for i := 0; i < 10; i++ {
+        counter.Inc()
+        gauge.Set(0.150) // 150ms response time
+        
+        // Send async (non-blocking, queued for background worker)
+        client.SendMetricsAsync()
+        
+        time.Sleep(1 * time.Second)
+    }
+}
 ```
 
 ## API Reference
@@ -92,13 +136,13 @@ package main
 client, err := gotel.NewWithDefaults()
 
 // Create with custom configuration
-cfg := &config.Config{
-    PrometheusEndpoint:  "http://localhost:9090/api/v1/write",
-    EnableAsyncMetrics:  true,
-    SendInterval:        5 * time.Second,
-    MinSendInterval:     time.Millisecond,
-    MetricBufferSize:    100,
-}
+cfg := config.Default()
+cfg.PrometheusEndpoint = "http://localhost:9090/api/v1/write"
+cfg.EnableAsyncMetrics = true
+cfg.SendInterval = 5 * time.Second
+cfg.MinSendInterval = time.Millisecond
+cfg.MetricBufferSize = 100
+
 client, err := gotel.New(cfg)
 ```
 
@@ -227,7 +271,7 @@ func main() {
     responseTimeGauge.Set(0.150) // 150ms
     
     // Send to Prometheus immediately
-    if err := client.SendMetrics(); err != nil {
+    if err := client.SendMetricsSync(); err != nil {
         log.Printf("Failed to send metrics: %v", err)
     }
 }
@@ -246,7 +290,7 @@ defer client.Close()
 // Ready to use!
 counter := client.Counter("api_calls_total", nil)
 counter.Inc()
-client.SendMetrics()
+client.SendMetricsSync()
 ```
 
 ## Project Structure
@@ -254,12 +298,13 @@ client.SendMetrics()
 ```
 gotel/
 ├── gotel.go                 # Main package API (New, NewWithDefaults)
-├── cmd/gotel/               # Example application demonstrating usage
+├── examples/                # Example applications demonstrating usage
+│   ├── simple_usage/        # Basic usage patterns
+│   └── stress_demo/         # High-load testing and fallback demonstration
 ├── pkg/
 │   ├── config/              # Unified configuration with Viper
 │   ├── client/              # Prometheus remote write client
-│   ├── metrics/             # Thread-safe metrics (counters, gauges)
-│   └── server/              # Optional HTTP server integration
+│   └── metrics/             # Thread-safe metrics (counters, gauges)
 ├── setup/                   # Docker Compose for local development
 └── go.mod                   # Module: github.com/GetSimpl/gotel
 ```
@@ -337,11 +382,14 @@ func main() {
     }
     
     // Track metrics
-    client.Counter("api_requests_total").Add(1)
-    client.Gauge("active_connections").Set(42)
+    counter := client.Counter("api_requests_total", nil)
+    counter.Add(1)
+    
+    gauge := client.Gauge("active_connections", nil)
+    gauge.Set(42)
     
     // Send metrics to Prometheus
-    if err := client.SendMetrics(context.Background()); err != nil {
+    if err := client.SendMetricsSync(); err != nil {
         log.Printf("Error sending metrics: %v", err)
     }
 }
@@ -365,26 +413,46 @@ export GOTEL_APP_NAME="my-service"
 export GOTEL_ENVIRONMENT="production"
 ```
 
-## Example Application
+## Example Applications
 
-The repository includes a complete example application demonstrating GoTel usage:
+The repository includes several example applications demonstrating different GoTel usage patterns.
+
+**Note**: Run all commands from the GoTel project root directory.
+
+### 1. Simple Usage Example
+
+Basic GoTel usage with both sync and async patterns:
 
 ```bash
-# Run the example application
-cd cmd/gotel
-go run main.go
+# Run the simple usage example
+go run examples/simple_usage/main.go
 ```
 
-**Available endpoints:**
-- `GET /` - Main endpoint (increments request counter)
-- `GET /health` - Health check with Prometheus client stats
-- `GET /metrics-info` - Current metrics values
-- `GET /client-stats` - Detailed Prometheus client statistics
+This example demonstrates:
+- Basic client creation with defaults
+- Counter and gauge metric creation
+- Synchronous and asynchronous metric sending
+- Custom configuration setup
+- Health monitoring
 
-**Access services:**
-- Application: http://localhost:8080
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin/admin)
+### 2. Stress Testing Example
+
+High-load testing demonstrating the three-tier reliability system:
+
+```bash
+# Run the stress testing example  
+go run examples/stress_demo/main.go
+```
+
+This example demonstrates:
+- High-load metric sending with small buffers
+- Goroutine pool fallback mechanism
+- Zero data loss under extreme load
+- Pool utilization and resource management
+
+### Running with Local Prometheus
+
+To see the examples in action with real metrics collection:
 
 ## Advanced Usage
 
@@ -422,8 +490,11 @@ labels := map[string]string{
     "region":  "us-west-2",
 }
 
-client.Counter("api_requests_total", labels).Add(1)
-client.Gauge("memory_usage_bytes", labels).Set(1024*1024*100)
+counter := client.Counter("api_requests_total", labels)
+counter.Add(1)
+
+gauge := client.Gauge("memory_usage_bytes", labels)
+gauge.Set(1024*1024*100)
 ```
 
 ## Testing
