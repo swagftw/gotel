@@ -1,3 +1,5 @@
+NOTE: THIS PROJECT IS A RESULT OF GEN AI
+
 # GoTel Metrics - Go Package for Direct Prometheus Push
 
 GoTel is a production-ready Go package for publishing metrics directly to Prometheus using the remote write protocol. It provides real-time metrics delivery without requiring OpenTelemetry Collector middleware, designed for easy integration into existing applications and teams.

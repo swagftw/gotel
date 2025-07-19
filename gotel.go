@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetSimpl/gotel/pkg/client"
 	"github.com/GetSimpl/gotel/pkg/config"
 	"github.com/GetSimpl/gotel/pkg/metrics"
+	"github.com/panjf2000/ants/v2"
 )
 
 // GoTel is the main client for sending metrics to Prometheus
@@ -29,6 +31,12 @@ type GoTel struct {
 
 	// Channel for async metrics sending
 	metricsChan chan struct{}
+
+	// Goroutine pool for fallback sync sends
+	pool *ants.Pool
+
+	// Metrics tracking
+	droppedRequests int64 // atomic counter
 }
 
 // New creates a new GoTel client with the provided configuration
@@ -48,6 +56,18 @@ func New(cfg *config.Config) (*GoTel, error) {
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Create goroutine pool for fallback sync sends
+	poolSize := 10 // Default pool size for fallback sends
+	if cfg.MetricBufferSize > 10 {
+		poolSize = cfg.MetricBufferSize / 10 // Pool size is 1/10th of buffer size
+	}
+
+	pool, err := ants.NewPool(poolSize, ants.WithNonblocking(false))
+	if err != nil {
+		cancel() // Clean up context
+		return nil, fmt.Errorf("failed to create goroutine pool: %w", err)
+	}
+
 	gotel := &GoTel{
 		config:           cfg,
 		prometheusClient: promClient,
@@ -55,6 +75,8 @@ func New(cfg *config.Config) (*GoTel, error) {
 		ctx:              ctx,
 		cancel:           cancel,
 		metricsChan:      make(chan struct{}, cfg.MetricBufferSize),
+		pool:             pool,
+		droppedRequests:  0,
 	}
 
 	// Start background metrics worker if async is enabled
@@ -108,11 +130,31 @@ func (g *GoTel) SendMetricsSync() error {
 	return g.prometheusClient.SendMetrics(timeSeries)
 }
 
-// SendMetricsAsync sends metrics asynchronously via buffered channel with rate limiting
-// This method will block if the channel is full, ensuring no metrics are lost
+// SendMetricsAsync sends metrics asynchronously via buffered channel with fallback to sync
+// If channel is full, falls back to pooled goroutine to ensure no metrics are lost
 func (g *GoTel) SendMetricsAsync() {
-	// Send signal to async worker, blocks if channel is full
-	g.metricsChan <- struct{}{}
+	select {
+	case g.metricsChan <- struct{}{}:
+		// Successfully queued for async worker
+	default:
+		// Channel full, fallback to pooled goroutine for immediate send
+		if g.config.LogLevel == "debug" || g.config.EnableDebug {
+			log.Printf("Metrics channel full, falling back to pooled sync send")
+		}
+
+		// Submit to goroutine pool for fallback sync send
+		err := g.pool.Submit(func() {
+			g.sendMetricsWithRateLimit()
+		})
+
+		if err != nil {
+			// Pool is also full or closed, count as dropped
+			atomic.AddInt64(&g.droppedRequests, 1)
+			if g.config.LogLevel == "debug" || g.config.EnableDebug {
+				log.Printf("Goroutine pool full, dropped requests: %d", atomic.LoadInt64(&g.droppedRequests))
+			}
+		}
+	}
 }
 
 // IncrementCounter is a convenience method to increment a counter by 1
@@ -161,8 +203,12 @@ func (g *GoTel) Close() error {
 	// Cancel context to stop any background goroutines
 	g.cancel()
 
+	// Close the goroutine pool
+	g.pool.Release()
+
 	if g.config.LogLevel == "debug" || g.config.EnableDebug {
-		log.Println("GoTel client shut down")
+		dropped := atomic.LoadInt64(&g.droppedRequests)
+		log.Printf("GoTel client shut down. Dropped requests: %d", dropped)
 	}
 
 	return nil
@@ -176,6 +222,10 @@ func (g *GoTel) Health() map[string]interface{} {
 		"metrics_count":       g.metricsRegistry.MetricsCount(),
 		"async_enabled":       g.config.EnableAsyncMetrics,
 		"config_valid":        g.config.Validate() == nil,
+		"pool_running":        g.pool.Running(),
+		"pool_free":           g.pool.Free(),
+		"pool_capacity":       g.pool.Cap(),
+		"dropped_requests":    atomic.LoadInt64(&g.droppedRequests),
 	}
 }
 
