@@ -190,7 +190,9 @@ HTTP_TIMEOUT=30s
 MAX_RETRIES=3
 RETRY_DELAY=1s
 ```
-```
+
+```go
+package main
 
 import (
     "log"
