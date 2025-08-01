@@ -43,7 +43,7 @@ func main() {
 	log.Println("\n=== Example 2: Custom Configuration ===")
 
 	cfg := config.Default() // Start with defaults
-	cfg.PrometheusEndpoint = "http://localhost:9090/api/v1/write"
+	cfg.OtelEndpoint = "localhost:4318"
 	cfg.EnableAsyncMetrics = true
 	cfg.SendInterval = 2 * time.Second
 	cfg.MinSendInterval = time.Millisecond // 1ms rate limiting

@@ -1,0 +1,66 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "*"
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  memory_limiter:
+    limit_mib: 512
+    check_interval: 1s
+
+  resource:
+    attributes:
+      - key: service.name
+        value: gotel
+        action: upsert
+      - key: service.version  
+        value: 1.0.0
+        action: upsert
+
+exporters:
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: gotel
+    const_labels:
+      exporter: otel-collector
+
+  debug:
+    verbosity: detailed
+
+  # Export to Prometheus via remote write
+  prometheusremotewrite:
+    endpoint: "http://prometheus:9090/api/v1/write"
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, debug, prometheusremotewrite]
+
+  extensions: []
+
+  telemetry:
+    logs:
+      level: "debug"
+    metrics:
+      level: "detailed"
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: "0.0.0.0"
+                port: 8888

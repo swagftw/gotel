@@ -12,7 +12,7 @@ import (
 func main() {
 	// Create configuration with small buffer to trigger fallback
 	cfg := config.Default()
-	cfg.PrometheusEndpoint = "http://localhost:9090/api/v1/write"
+	cfg.OtelEndpoint = "localhost:4318"
 	cfg.EnableAsyncMetrics = true
 	cfg.SendInterval = 10 * time.Second // Long interval to fill buffer
 	cfg.MinSendInterval = time.Millisecond

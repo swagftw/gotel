@@ -1,6 +1,6 @@
-// Package gotel provides direct Prometheus metrics push capabilities with real-time delivery.
-// It offers a simple API for applications to send metrics directly to Prometheus
-// without requiring OpenTelemetry Collector middleware.
+// Package gotel provides OpenTelemetry metrics capabilities with real-time delivery.
+// It offers a simple API for applications to send metrics to OpenTelemetry Collector
+// and compatible backends.
 package gotel
 
 import (
@@ -17,13 +17,13 @@ import (
 	"github.com/panjf2000/ants/v2"
 )
 
-// GoTel is the main client for sending metrics to Prometheus
+// GoTel is the main client for sending metrics to OpenTelemetry Collector
 type GoTel struct {
-	config           *config.Config
-	prometheusClient *client.PrometheusClient
-	metricsRegistry  *metrics.Registry
-	ctx              context.Context
-	cancel           context.CancelFunc
+	config          *config.Config
+	otelClient      *client.OtelClient
+	metricsRegistry *metrics.Registry
+	ctx             context.Context
+	cancel          context.CancelFunc
 
 	// Rate limiting for metrics sending
 	lastMetricsSent time.Time
@@ -50,11 +50,18 @@ func New(cfg *config.Config) (*GoTel, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Create Prometheus client using unified configuration
-	promClient := client.NewPrometheusClient(cfg)
-
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create OpenTelemetry client
+	otelClient, err := client.NewOtelClient(cfg)
+	if err != nil {
+		cancel() // Clean up context
+		return nil, fmt.Errorf("failed to create OTEL client: %w", err)
+	}
+
+	// Create metrics registry with OTEL client
+	metricsRegistry := metrics.NewRegistry(otelClient, ctx)
 
 	// Create goroutine pool for fallback sync sends
 	poolSize := 10 // Default pool size for fallback sends
@@ -65,18 +72,19 @@ func New(cfg *config.Config) (*GoTel, error) {
 	pool, err := ants.NewPool(poolSize, ants.WithNonblocking(false))
 	if err != nil {
 		cancel() // Clean up context
+		otelClient.Close()
 		return nil, fmt.Errorf("failed to create goroutine pool: %w", err)
 	}
 
 	gotel := &GoTel{
-		config:           cfg,
-		prometheusClient: promClient,
-		metricsRegistry:  metrics.NewRegistry(),
-		ctx:              ctx,
-		cancel:           cancel,
-		metricsChan:      make(chan struct{}, cfg.MetricBufferSize),
-		pool:             pool,
-		droppedRequests:  0,
+		config:          cfg,
+		otelClient:      otelClient,
+		metricsRegistry: metricsRegistry,
+		ctx:             ctx,
+		cancel:          cancel,
+		metricsChan:     make(chan struct{}, cfg.MetricBufferSize),
+		pool:            pool,
+		droppedRequests: 0,
 	}
 
 	// Start background metrics worker if async is enabled
@@ -85,7 +93,7 @@ func New(cfg *config.Config) (*GoTel, error) {
 	}
 
 	if cfg.LogLevel == "debug" || cfg.EnableDebug {
-		log.Printf("GoTel initialized with Prometheus endpoint: %s", cfg.PrometheusEndpoint)
+		log.Printf("GoTel initialized with OTEL endpoint: %s", cfg.OtelEndpoint)
 		log.Printf("Async metrics: %v, Buffer size: %d", cfg.EnableAsyncMetrics, cfg.MetricBufferSize)
 	}
 
@@ -109,7 +117,7 @@ func (g *GoTel) Gauge(name string, labels map[string]string) *metrics.Gauge {
 	return g.metricsRegistry.GetOrCreateGauge(name, labels)
 }
 
-// SendMetricsSync sends all registered metrics to Prometheus synchronously with rate limiting
+// SendMetricsSync sends all registered metrics synchronously with rate limiting
 func (g *GoTel) SendMetricsSync() error {
 	g.metricsMutex.Lock()
 	defer g.metricsMutex.Unlock()
@@ -122,12 +130,8 @@ func (g *GoTel) SendMetricsSync() error {
 
 	g.lastMetricsSent = now
 
-	timeSeries := g.metricsRegistry.Collect()
-	if len(timeSeries) == 0 {
-		return nil
-	}
-
-	return g.prometheusClient.SendMetrics(timeSeries)
+	// Force flush OTEL metrics
+	return g.otelClient.ForceFlush()
 }
 
 // SendMetricsAsync sends metrics asynchronously via buffered channel with fallback to sync
@@ -206,6 +210,11 @@ func (g *GoTel) Close() error {
 	// Close the goroutine pool
 	g.pool.Release()
 
+	// Close OTEL client
+	if err := g.otelClient.Close(); err != nil {
+		log.Printf("Failed to close OTEL client: %v", err)
+	}
+
 	if g.config.LogLevel == "debug" || g.config.EnableDebug {
 		dropped := atomic.LoadInt64(&g.droppedRequests)
 		log.Printf("GoTel client shut down. Dropped requests: %d", dropped)
@@ -217,15 +226,15 @@ func (g *GoTel) Close() error {
 // Health returns basic health information about the GoTel client
 func (g *GoTel) Health() map[string]interface{} {
 	return map[string]interface{}{
-		"status":              "healthy",
-		"prometheus_endpoint": g.config.PrometheusEndpoint,
-		"metrics_count":       g.metricsRegistry.MetricsCount(),
-		"async_enabled":       g.config.EnableAsyncMetrics,
-		"config_valid":        g.config.Validate() == nil,
-		"pool_running":        g.pool.Running(),
-		"pool_free":           g.pool.Free(),
-		"pool_capacity":       g.pool.Cap(),
-		"dropped_requests":    atomic.LoadInt64(&g.droppedRequests),
+		"status":           "healthy",
+		"otel_endpoint":    g.config.OtelEndpoint,
+		"metrics_count":    g.metricsRegistry.MetricsCount(),
+		"async_enabled":    g.config.EnableAsyncMetrics,
+		"config_valid":     g.config.Validate() == nil,
+		"pool_running":     g.pool.Running(),
+		"pool_free":        g.pool.Free(),
+		"pool_capacity":    g.pool.Cap(),
+		"dropped_requests": atomic.LoadInt64(&g.droppedRequests),
 	}
 }
 
@@ -263,15 +272,10 @@ func (g *GoTel) sendMetricsWithRateLimit() {
 
 	g.lastMetricsSent = now
 
-	// Send metrics
-	timeSeries := g.metricsRegistry.Collect()
-	if len(timeSeries) == 0 {
-		return
-	}
-
-	if err := g.prometheusClient.SendMetrics(timeSeries); err != nil {
+	// Force flush OTEL metrics
+	if err := g.otelClient.ForceFlush(); err != nil {
 		if g.config.LogLevel == "debug" || g.config.EnableDebug {
-			log.Printf("Failed to send metrics: %v", err)
+			log.Printf("Failed to flush metrics: %v", err)
 		}
 	}
 }

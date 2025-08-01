@@ -1,8 +1,8 @@
 NOTE: THIS PROJECT IS A RESULT OF GEN AI
 
-# GoTel Metrics - Go Package for Direct Prometheus Push
+# GoTel Metrics - Go Package for OpenTelemetry Metrics
 
-GoTel is a production-ready Go package for publishing metrics directly to Prometheus using the remote write protocol. It provides real-time metrics delivery without requiring OpenTelemetry Collector middleware, designed for easy integration into existing applications and teams.
+GoTel is a production-ready Go package for publishing metrics to OpenTelemetry Collector and compatible backends. It provides real-time metrics delivery using the OpenTelemetry standard, designed for easy integration into existing applications and teams.
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.20-blue)](https://golang.org/dl/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -10,21 +10,21 @@ GoTel is a production-ready Go package for publishing metrics directly to Promet
 
 ## Overview
 
-GoTel transforms the traditional pull-based metrics pattern into a modern push-based approach, enabling real-time observability for cloud-native applications. Perfect for teams wanting production-grade metrics without the complexity of OpenTelemetry Collector setup.
+GoTel transforms traditional metrics collection into a modern push-based approach using OpenTelemetry standards, enabling real-time observability for cloud-native applications. Perfect for teams wanting production-grade metrics with industry-standard telemetry protocols.
 
 ### Package Design
 
 - **📦 Reusable Go Package**: Import `github.com/GetSimpl/gotel` into any Go application
 - **⚙️ Unified Configuration**: Single config system using Viper with environment variable support
-- **🚀 Zero Dependencies**: No collector, agent, or middleware required
+- **🚀 OpenTelemetry Standard**: Uses OTEL SDK for industry-standard telemetry
 - **🔧 Production Ready**: Used by teams for high-throughput applications
 
 ## Key Features
 
-- **🔥 True Real-time**: Metrics sent immediately with configurable async/sync modes
-- **📈 Direct Push**: No middleware/collector dependencies  
-- **💪 Production Resilient**: Rate limiting (1ms default) prevents duplicate timestamp errors
-- **⚡ Optimized Transport**: Protocol buffers + snappy compression + connection pooling
+- **🔥 OpenTelemetry Standard**: Built on OTEL SDK for industry-standard telemetry
+- **📈 Push-based Metrics**: Send metrics to OTEL Collector and compatible backends
+- **💪 Production Resilient**: Rate limiting and automatic retries
+- **⚡ Optimized Transport**: HTTP/gRPC with compression and connection pooling
 - **🧵 Thread-Safe**: Atomic counters and concurrent-safe operations
 - **🔧 Simple API**: Clean interface with sync/async sending options
 - **📊 Comprehensive Config**: Viper-based configuration with environment variable support
@@ -90,7 +90,7 @@ import (
 func main() {
     // Create custom configuration for async mode
     cfg := config.Default()
-    cfg.PrometheusEndpoint = "http://localhost:9090/api/v1/write"
+    cfg.OtelEndpoint = "http://localhost:4318/v1/metrics"
     cfg.EnableAsyncMetrics = true
     cfg.SendInterval = 5 * time.Second
     cfg.MinSendInterval = time.Millisecond
@@ -137,7 +137,7 @@ client, err := gotel.NewWithDefaults()
 
 // Create with custom configuration
 cfg := config.Default()
-cfg.PrometheusEndpoint = "http://localhost:9090/api/v1/write"
+cfg.OtelEndpoint = "http://localhost:4318/v1/metrics"
 cfg.EnableAsyncMetrics = true
 cfg.SendInterval = 5 * time.Second
 cfg.MinSendInterval = time.Millisecond
@@ -207,7 +207,7 @@ GoTel uses a unified configuration system with environment variable support:
 
 ```go
 type Config struct {
-    PrometheusEndpoint  string        // Prometheus remote write endpoint
+    OtelEndpoint        string        // OpenTelemetry Collector endpoint
     EnableAsyncMetrics  bool          // Enable background async sending
     SendInterval        time.Duration // Interval for periodic sends (async mode)
     MinSendInterval     time.Duration // Rate limit interval (default: 1ms)
@@ -224,7 +224,7 @@ type Config struct {
 Set these environment variables for automatic configuration:
 
 ```bash
-PROMETHEUS_ENDPOINT=http://localhost:9090/api/v1/write
+OTEL_ENDPOINT=http://localhost:4318/v1/metrics
 ENABLE_ASYNC_METRICS=true
 SEND_INTERVAL=5s
 MIN_SEND_INTERVAL=1ms
@@ -270,7 +270,7 @@ func main() {
     requestCounter.Inc()
     responseTimeGauge.Set(0.150) // 150ms
     
-    // Send to Prometheus immediately
+    // Send to OTEL Collector immediately
     if err := client.SendMetricsSync(); err != nil {
         log.Printf("Failed to send metrics: %v", err)
     }
@@ -303,7 +303,7 @@ gotel/
 │   └── stress_demo/         # High-load testing and fallback demonstration
 ├── pkg/
 │   ├── config/              # Unified configuration with Viper
-│   ├── client/              # Prometheus remote write client
+│   ├── client/              # OpenTelemetry OTLP client
 │   └── metrics/             # Thread-safe metrics (counters, gauges)
 ├── setup/                   # Docker Compose for local development
 └── go.mod                   # Module: github.com/GetSimpl/gotel
@@ -319,7 +319,7 @@ All configuration can be controlled via environment variables with the `GOTEL_` 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOTEL_PROMETHEUS_ENDPOINT` | `http://localhost:9090/api/v1/write` | Prometheus remote write URL |
+| `GOTEL_OTEL_ENDPOINT` | `localhost:4318` | OpenTelemetry Collector endpoint (host:port format) |
 | `GOTEL_APP_NAME` | `gotel-app` | Application name for metrics |
 | `GOTEL_APP_VERSION` | `1.0.0` | Application version |
 | `GOTEL_ENVIRONMENT` | `development` | Environment (dev, staging, prod) |
@@ -388,7 +388,7 @@ func main() {
     gauge := client.Gauge("active_connections", nil)
     gauge.Set(42)
     
-    // Send metrics to Prometheus
+    // Send metrics to OTEL Collector
     if err := client.SendMetricsSync(); err != nil {
         log.Printf("Error sending metrics: %v", err)
     }
@@ -398,7 +398,7 @@ func main() {
 ### 3. Local Development Setup
 
 ```bash
-# Start Prometheus and Grafana
+# Start OpenTelemetry Collector, Prometheus and Grafana
 cd setup
 docker-compose up -d
 
@@ -408,7 +408,7 @@ docker-compose up -d
 ### 4. Environment Configuration
 
 ```bash
-export GOTEL_PROMETHEUS_ENDPOINT="https://prometheus.example.com/api/v1/write"
+export GOTEL_OTEL_ENDPOINT="otel-collector.example.com:4318"
 export GOTEL_APP_NAME="my-service"
 export GOTEL_ENVIRONMENT="production"
 ```
@@ -450,7 +450,7 @@ This example demonstrates:
 - Zero data loss under extreme load
 - Pool utilization and resource management
 
-### Running with Local Prometheus
+### Running with Local OpenTelemetry Collector
 
 To see the examples in action with real metrics collection:
 
@@ -467,7 +467,7 @@ import (
 func main() {
     // Custom configuration
     cfg := config.Default()
-    cfg.PrometheusEndpoint = "https://prometheus.example.com/api/v1/write"
+    cfg.OtelEndpoint = "otel-collector.example.com:4318"
     cfg.AppName = "my-service"
     cfg.Environment = "production"
     cfg.EnableAsyncMetrics = false // Synchronous metrics
@@ -557,11 +557,8 @@ GoTel supports comprehensive configuration through environment variables. Use th
 ### Quick Configuration Setup
 
 ```bash
-# Create configuration from template
-make env-setup
-
-# Check current configuration
-make env-check
+# Set OpenTelemetry Collector endpoint
+export OTEL_ENDPOINT="http://localhost:4318"
 
 # Start with custom configuration
 make run
@@ -572,7 +569,7 @@ make run
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8080` | Server port |
-| `PROMETHEUS_ENDPOINT` | `http://localhost:9090/api/v1/write` | Prometheus remote write URL |
+| `OTEL_ENDPOINT` | `http://localhost:4318` | OpenTelemetry Collector HTTP endpoint |
 | `LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `DEBUG` | `false` | Enable debug mode |
 | `METRICS_ENABLED` | `true` | Enable metrics collection |
@@ -583,31 +580,30 @@ For complete configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 ## Configuration Files
 
 - `.env.example`: Complete configuration template with all options
-- `prometheus.yml`: Prometheus configuration with environment variable support
+- `otel-collector.yml`: OpenTelemetry Collector configuration with Prometheus exporter
 - `grafana/provisioning/`: Auto-provisioning for Grafana with configurable datasources
 - `docker-compose.yaml`: Multi-service setup with environment variable support
 - `Dockerfile`: Production-ready container with health checks
 - `Makefile`: Build automation with configuration management
 
-## How Direct Push Works
+## How OpenTelemetry Integration Works
 
 1. **Request**: HTTP request hits Go application
 2. **Count**: Atomic increment of request counter + active request gauge
-3. **Serialize**: Create Prometheus TimeSeries with protocol buffers
-4. **Compress**: Snappy compression for bandwidth efficiency (~60% reduction)
-5. **Push**: Immediate HTTP POST to Prometheus remote write endpoint with connection pooling
-6. **Retry**: Automatic retries with exponential backoff for 429/5xx errors
-7. **Store**: Prometheus stores and makes metrics available instantly
+3. **Record**: Send metrics to OpenTelemetry SDK
+4. **Export**: OTEL SDK exports to configured collector endpoint via HTTP/gRPC
+5. **Collect**: OpenTelemetry Collector receives metrics
+6. **Forward**: Collector forwards to Prometheus, Grafana, or other backends
+7. **Store**: Backends store and make metrics available for querying
 
 ## Technical Details
 
-- **Protocol**: Prometheus Remote Write Protocol v0.1.0
-- **Encoding**: Protocol Buffers + Snappy compression
-- **HTTP Client**: Resty with optimized transport layer
-- **Retry Strategy**: Exponential backoff for 429 (Too Many Requests) and 5xx server errors
-- **Timeouts**: 30s request timeout with 90s idle connection timeout
-- **Connection Pool**: 100 max idle connections, 10 per host with keep-alive
-- **Concurrency**: Goroutines for non-blocking metric sending (configurable)
+- **Protocol**: OpenTelemetry Protocol (OTLP) over HTTP/gRPC
+- **SDK**: OpenTelemetry Go SDK v1.24+
+- **Exporters**: OTLP HTTP exporter with compression
+- **Transport**: HTTP/2 with connection pooling and automatic retries
+- **Collector**: OpenTelemetry Collector routes metrics to multiple backends
+- **Concurrency**: Goroutine-safe metric operations with atomic updates
 - **Thread Safety**: Atomic operations for all metric updates
 
 ## Production Considerations

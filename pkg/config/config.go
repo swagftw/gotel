@@ -12,10 +12,10 @@ import (
 // Config holds all configuration for GoTel
 type Config struct {
 	// Core settings
-	PrometheusEndpoint string `mapstructure:"prometheus_endpoint"`
-	LogLevel           string `mapstructure:"log_level"`
-	EnableDebug        bool   `mapstructure:"debug"`
-	Environment        string `mapstructure:"environment"`
+	OtelEndpoint string `mapstructure:"otel_endpoint"`
+	LogLevel     string `mapstructure:"log_level"`
+	EnableDebug  bool   `mapstructure:"debug"`
+	Environment  string `mapstructure:"environment"`
 
 	// Feature flags
 	EnableAsyncMetrics bool `mapstructure:"enable_async_metrics"`
@@ -41,16 +41,20 @@ type Config struct {
 	AppName    string `mapstructure:"app_name"`
 	AppVersion string `mapstructure:"app_version"`
 	Instance   string `mapstructure:"instance"`
+
+	// OTEL specific settings
+	OtelHeaders map[string]string `mapstructure:"otel_headers"`
+	Insecure    bool              `mapstructure:"insecure"`
 }
 
 // Default returns a configuration with sensible defaults
 func Default() *Config {
 	return &Config{
 		// Core settings
-		PrometheusEndpoint: "http://localhost:9090/api/v1/write",
-		LogLevel:           "info",
-		EnableDebug:        false,
-		Environment:        "development",
+		OtelEndpoint: "localhost:4318",
+		LogLevel:     "info",
+		EnableDebug:  false,
+		Environment:  "development",
 
 		// Feature flags
 		EnableAsyncMetrics: true,
@@ -76,6 +80,10 @@ func Default() *Config {
 		AppName:    "gotel-app",
 		AppVersion: "1.0.0",
 		Instance:   "default",
+
+		// OTEL specific settings
+		OtelHeaders: make(map[string]string),
+		Insecure:    true, // Default to insecure for local development
 	}
 }
 
@@ -98,10 +106,11 @@ func FromEnvWithPrefix(prefix string) *Config {
 	v.AutomaticEnv()
 
 	// Also check for common environment variables without prefix
-	v.BindEnv("prometheus_endpoint", "PROMETHEUS_ENDPOINT")
+	v.BindEnv("otel_endpoint", "OTEL_ENDPOINT", "OTEL_EXPORTER_OTLP_ENDPOINT")
 	v.BindEnv("log_level", "LOG_LEVEL")
 	v.BindEnv("debug", "DEBUG")
 	v.BindEnv("environment", "ENVIRONMENT")
+	v.BindEnv("insecure", "OTEL_EXPORTER_OTLP_INSECURE")
 
 	// Unmarshal into config struct
 	var config Config
@@ -143,7 +152,7 @@ func FromFile(filename string) (*Config, error) {
 
 // setDefaults sets default values in Viper
 func setDefaults(v *viper.Viper, cfg *Config) {
-	v.SetDefault("prometheus_endpoint", cfg.PrometheusEndpoint)
+	v.SetDefault("otel_endpoint", cfg.OtelEndpoint)
 	v.SetDefault("log_level", cfg.LogLevel)
 	v.SetDefault("debug", cfg.EnableDebug)
 	v.SetDefault("environment", cfg.Environment)
@@ -168,12 +177,14 @@ func setDefaults(v *viper.Viper, cfg *Config) {
 	v.SetDefault("app_name", cfg.AppName)
 	v.SetDefault("app_version", cfg.AppVersion)
 	v.SetDefault("instance", cfg.Instance)
+
+	v.SetDefault("insecure", cfg.Insecure)
 }
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
-	if c.PrometheusEndpoint == "" {
-		return fmt.Errorf("prometheus_endpoint is required")
+	if c.OtelEndpoint == "" {
+		return fmt.Errorf("otel_endpoint is required")
 	}
 
 	if c.MetricBufferSize <= 0 {

@@ -1,7 +1,23 @@
 version: '3.8'
 
 services:
-  # Prometheus server with remote write receiver enabled
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8888:8888"   # Prometheus metrics
+      - "8889:8889"   # Prometheus exporter metrics
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # Prometheus server to receive metrics from OTEL Collector
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
@@ -17,7 +33,6 @@ services:
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--web.enable-lifecycle'
       - '--web.enable-admin-api'
-      - '--web.enable-remote-write-receiver'
     restart: unless-stopped
 
   # Grafana for visualization
