@@ -9,8 +9,9 @@ import (
 
 // Mock OTEL client for testing
 type mockOtelClient struct {
-	counters map[string]metric.Int64Counter
-	gauges   map[string]metric.Float64Gauge
+	counters   map[string]metric.Int64Counter
+	gauges     map[string]metric.Float64Gauge
+	histograms map[string]metric.Float64Histogram
 }
 
 func (m *mockOtelClient) GetOrCreateCounter(name string, labels map[string]string) (metric.Int64Counter, error) {
@@ -31,10 +32,20 @@ func (m *mockOtelClient) GetOrCreateGauge(name string, labels map[string]string)
 	return nil, nil
 }
 
+func (m *mockOtelClient) GetOrCreateHistogram(name string, labels map[string]string) (metric.Float64Histogram, error) {
+	key := metricKey(name, labels)
+	if histogram, exists := m.histograms[key]; exists {
+		return histogram, nil
+	}
+	// Return nil for testing - we just want to test the registry logic
+	return nil, nil
+}
+
 func newMockOtelClient() *mockOtelClient {
 	return &mockOtelClient{
-		counters: make(map[string]metric.Int64Counter),
-		gauges:   make(map[string]metric.Float64Gauge),
+		counters:   make(map[string]metric.Int64Counter),
+		gauges:     make(map[string]metric.Float64Gauge),
+		histograms: make(map[string]metric.Float64Histogram),
 	}
 }
 
@@ -55,6 +66,12 @@ func TestRegistry(t *testing.T) {
 		t.Error("Expected gauge to be created")
 	}
 
+	// Test GetOrCreateHistogram
+	histogram := registry.GetOrCreateHistogram("test_histogram", map[string]string{"path": "/"})
+	if histogram == nil {
+		t.Error("Expected histogram to be created")
+	}
+
 	// Test GetCounter
 	retrievedCounter, exists := registry.GetCounter("test_counter")
 	if !exists {
@@ -73,16 +90,25 @@ func TestRegistry(t *testing.T) {
 		t.Error("Expected retrieved gauge to not be nil")
 	}
 
+	// Test GetHistogram
+	retrievedHistogram, exists := registry.GetHistogram("test_histogram")
+	if !exists {
+		t.Error("Expected histogram to exist in registry")
+	}
+	if retrievedHistogram == nil {
+		t.Error("Expected retrieved histogram to not be nil")
+	}
+
 	// Test MetricsCount
 	count := registry.MetricsCount()
-	if count != 2 {
-		t.Errorf("Expected 2 metrics, got %d", count)
+	if count != 3 {
+		t.Errorf("Expected 3 metrics, got %d", count)
 	}
 
 	// Test Collect
 	metrics := registry.Collect()
-	if len(metrics) != 2 {
-		t.Errorf("Expected 2 metrics in collection, got %d", len(metrics))
+	if len(metrics) != 3 {
+		t.Errorf("Expected 3 metrics in collection, got %d", len(metrics))
 	}
 }
 
@@ -147,6 +173,16 @@ func TestGauge(t *testing.T) {
 	if abs(gauge.Get()-5.0) > tolerance {
 		t.Errorf("Expected gauge value to be 5.0 after Add(1.86), got %f", gauge.Get())
 	}
+}
+
+func TestHistogram(t *testing.T) {
+	ctx := context.Background()
+	histogram := NewHistogram("test_histogram", map[string]string{"le": "0.5"}, nil, ctx)
+
+	// Record a value
+	histogram.Record(0.45)
+	// We can't really test the value of a histogram without an exporter,
+	// but we can test that the Record method doesn't panic.
 }
 
 // abs returns the absolute value of x

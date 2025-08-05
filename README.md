@@ -12,21 +12,23 @@ GoTel is a production-ready Go package for publishing metrics to OpenTelemetry C
 
 GoTel transforms traditional metrics collection into a modern push-based approach using OpenTelemetry standards, enabling real-time observability for cloud-native applications. Perfect for teams wanting production-grade metrics with industry-standard telemetry protocols.
 
+**Key Insight**: With OpenTelemetry Collector integration, GoTel leverages OTEL SDK's built-in batching, buffering, and reliability mechanisms. No need for custom async/sync implementations - OTEL handles it all automatically.
+
 ### Package Design
 
 - **📦 Reusable Go Package**: Import `github.com/GetSimpl/gotel` into any Go application
 - **⚙️ Unified Configuration**: Single config system using Viper with environment variable support
-- **🚀 OpenTelemetry Standard**: Uses OTEL SDK for industry-standard telemetry
-- **🔧 Production Ready**: Used by teams for high-throughput applications
+- **🚀 OpenTelemetry Standard**: Uses OTEL SDK for industry-standard telemetry with automatic batching
+- **🔧 Production Ready**: OTEL SDK provides built-in reliability, retries, and buffering
 
 ## Key Features
 
 - **🔥 OpenTelemetry Standard**: Built on OTEL SDK for industry-standard telemetry
-- **📈 Push-based Metrics**: Send metrics to OTEL Collector and compatible backends
-- **💪 Production Resilient**: Rate limiting and automatic retries
-- **⚡ Optimized Transport**: HTTP/gRPC with compression and connection pooling
+- **📈 Automatic Batching**: OTEL SDK automatically batches and sends metrics every 30 seconds
+- **💪 Built-in Reliability**: OTEL Collector provides buffering, retries, and delivery guarantees
+- **⚡ Optimized Transport**: HTTP/gRPC with compression and connection pooling via OTEL
 - **🧵 Thread-Safe**: Atomic counters and concurrent-safe operations
-- **🔧 Simple API**: Clean interface with sync/async sending options
+- **🔧 Simple API**: Clean interface - metrics are automatically sent by OTEL SDK
 - **📊 Comprehensive Config**: Viper-based configuration with environment variable support
 - **🐳 Container Ready**: Docker support for local development and testing
 
@@ -37,6 +39,8 @@ go get github.com/GetSimpl/gotel
 ```
 
 ## Quick Start
+
+You can add your own example usage in the `examples/` directory. No default examples are provided in this repository.
 
 ### Basic Usage
 
@@ -68,14 +72,15 @@ func main() {
     })
     gauge.Set(42.5)
 
-    // Send metrics synchronously
-    if err := client.SendMetricsSync(); err != nil {
-        log.Printf("Failed to send metrics: %v", err)
+    // Optional: Force immediate flush (usually not needed)
+    // OTEL SDK automatically sends metrics every 30 seconds
+    if err := client.ForceFlush(); err != nil {
+        log.Printf("Failed to flush metrics: %v", err)
     }
 }
 ```
 
-### Async Mode with Custom Configuration
+### Custom Configuration
 
 ```go
 package main
@@ -88,13 +93,11 @@ import (
 )
 
 func main() {
-    // Create custom configuration for async mode
+    // Create custom configuration
     cfg := config.Default()
-    cfg.OtelEndpoint = "http://localhost:4318/v1/metrics"
-    cfg.EnableAsyncMetrics = true
-    cfg.SendInterval = 5 * time.Second
-    cfg.MinSendInterval = time.Millisecond
-    cfg.MetricBufferSize = 100
+    cfg.OtelEndpoint = "localhost:4318"
+    cfg.AppName = "my-service"
+    cfg.Environment = "production"
     cfg.EnableDebug = true
 
     client, err := gotel.New(cfg)
@@ -113,16 +116,16 @@ func main() {
         "endpoint": "/api/users",
     })
 
-    // Use metrics - these will be sent asynchronously
+    // Use metrics - OTEL SDK automatically batches and sends them
     for i := 0; i < 10; i++ {
         counter.Inc()
         gauge.Set(0.150) // 150ms response time
         
-        // Send async (non-blocking, queued for background worker)
-        client.SendMetricsAsync()
-        
         time.Sleep(1 * time.Second)
     }
+    
+    // Optional: Force flush before shutdown
+    client.ForceFlush()
 }
 ```
 
@@ -177,45 +180,46 @@ value := gauge.Get()    // Get current value
 
 #### Sending Metrics
 
-**Synchronous Sending (with rate limiting)**
+**Automatic Batching (Recommended)**
 ```go
-// Send immediately, rate limited to prevent duplicate timestamps
-err := client.SendMetricsSync()
+// Metrics are automatically batched and sent by OTEL SDK every 30 seconds
+counter.Inc()
+gauge.Set(42.5)
+// No manual sending required!
 ```
 
-**Asynchronous Sending (via buffered channel)**
+**Force Immediate Flush (When Needed)**
 ```go
-// Send via background worker, blocks if buffer is full (no metrics lost)
-client.SendMetricsAsync()
+// Force immediate export - usually only needed before shutdown
+err := client.ForceFlush()
 ```
 
 **Convenience Methods**
 ```go
-// Automatically chooses sync/async based on configuration
-err := client.IncrementCounter("api_calls", map[string]string{
+// Shorthand methods for common operations
+client.IncrementCounter("api_calls", map[string]string{
     "endpoint": "/users",
 })
 
-err := client.SetGauge("temperature", 23.5, map[string]string{
+client.SetGauge("temperature", 23.5, map[string]string{
     "sensor": "room1",
 })
 ```
 
 ### Configuration
 
-GoTel uses a unified configuration system with environment variable support:
+GoTel uses a unified configuration system with environment variable support. The OTEL SDK handles all batching automatically:
 
 ```go
 type Config struct {
-    OtelEndpoint        string        // OpenTelemetry Collector endpoint
-    EnableAsyncMetrics  bool          // Enable background async sending
-    SendInterval        time.Duration // Interval for periodic sends (async mode)
-    MinSendInterval     time.Duration // Rate limit interval (default: 1ms)
-    MetricBufferSize    int           // Buffer size for async channel
+    OtelEndpoint        string        // OpenTelemetry Collector endpoint (host:port)
+    AppName             string        // Application name for service identification
+    AppVersion          string        // Application version
+    Environment         string        // Environment (dev, staging, prod)
     EnableDebug         bool          // Enable debug logging
-    HTTPTimeout         time.Duration // HTTP client timeout
-    MaxRetries          int           // Max retry attempts
-    RetryDelay          time.Duration // Base retry delay
+    HTTPTimeout         time.Duration // HTTP client timeout for OTEL exports
+    SendInterval        time.Duration // OTEL SDK export interval (default: 30s)
+    MinSendInterval     time.Duration // Minimum interval between manual flushes
 }
 ```
 
@@ -224,15 +228,14 @@ type Config struct {
 Set these environment variables for automatic configuration:
 
 ```bash
-OTEL_ENDPOINT=http://localhost:4318/v1/metrics
-ENABLE_ASYNC_METRICS=true
-SEND_INTERVAL=5s
-MIN_SEND_INTERVAL=1ms
-METRIC_BUFFER_SIZE=100
-ENABLE_DEBUG=true
-HTTP_TIMEOUT=30s
-MAX_RETRIES=3
-RETRY_DELAY=1s
+GOTEL_OTEL_ENDPOINT=localhost:4318
+GOTEL_APP_NAME=my-service
+GOTEL_APP_VERSION=1.0.0
+GOTEL_ENVIRONMENT=production
+GOTEL_DEBUG=true
+GOTEL_HTTP_TIMEOUT=30s
+GOTEL_SEND_INTERVAL=30s
+GOTEL_MIN_SEND_INTERVAL=1s
 ```
 
 ```go
@@ -324,10 +327,9 @@ All configuration can be controlled via environment variables with the `GOTEL_` 
 | `GOTEL_APP_VERSION` | `1.0.0` | Application version |
 | `GOTEL_ENVIRONMENT` | `development` | Environment (dev, staging, prod) |
 | `GOTEL_DEBUG` | `false` | Enable debug logging |
-| `GOTEL_ENABLE_ASYNC_METRICS` | `true` | Send metrics asynchronously |
-| `GOTEL_HTTP_TIMEOUT` | `30s` | HTTP request timeout |
-| `GOTEL_RETRY_COUNT` | `3` | Number of retry attempts |
-| `GOTEL_MAX_IDLE_CONNECTIONS` | `100` | HTTP connection pool size |
+| `GOTEL_HTTP_TIMEOUT` | `30s` | HTTP request timeout for OTEL exports |
+| `GOTEL_SEND_INTERVAL` | `30s` | OTEL SDK automatic export interval |
+| `GOTEL_MIN_SEND_INTERVAL` | `1s` | Minimum interval between manual flushes |
 
 ### Configuration Methods
 
@@ -338,8 +340,8 @@ cfg := config.Default()
 // Method 2: Load from environment variables 
 cfg := config.FromEnv()
 
-// Method 3: Load from environment with custom prefix
-cfg := config.FromEnvWithPrefix("MYAPP")
+// Method 3: Load from environment with custom prefix (deprecated, use unprefixed vars)
+// cfg := config.FromEnvWithPrefix("MYAPP")
 
 // Method 4: Use NewWithDefaults (simplest)
 client, err := gotel.NewWithDefaults()
@@ -408,9 +410,9 @@ docker-compose up -d
 ### 4. Environment Configuration
 
 ```bash
-export GOTEL_OTEL_ENDPOINT="otel-collector.example.com:4318"
-export GOTEL_APP_NAME="my-service"
-export GOTEL_ENVIRONMENT="production"
+export OTEL_ENDPOINT="otel-collector.example.com:4318"
+export OTEL_APP_NAME="my-service"
+export OTEL_ENVIRONMENT="production"
 ```
 
 ## Example Applications
@@ -546,9 +548,11 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Metrics Collected
 
-- `gotel_http_requests_total`: Real-time counter of HTTP requests (sent instantly via remote write)
-- `gotel_active_requests`: Gauge tracking concurrent active requests
+- `http_requests_total`: Real-time counter of HTTP requests (exposed via Prometheus scrape endpoint)
+- `http_request_duration_seconds`: Histogram for request latency tracking (enables P50, P90, P95, P99 percentiles)
+- `active_requests`: Gauge tracking concurrent active requests
 - Thread-safe atomic counter operations for high-concurrency scenarios
+- Histogram buckets automatically configured for latency percentile calculations
 
 ## Configuration
 
@@ -592,9 +596,9 @@ For complete configuration options, see [CONFIGURATION.md](CONFIGURATION.md).
 2. **Count**: Atomic increment of request counter + active request gauge
 3. **Record**: Send metrics to OpenTelemetry SDK
 4. **Export**: OTEL SDK exports to configured collector endpoint via HTTP/gRPC
-5. **Collect**: OpenTelemetry Collector receives metrics
-6. **Forward**: Collector forwards to Prometheus, Grafana, or other backends
-7. **Store**: Backends store and make metrics available for querying
+5. **Collect**: OpenTelemetry Collector receives metrics and exposes them via Prometheus endpoint
+6. **Scrape**: Prometheus scrapes metrics from Collector's `/metrics` endpoint
+7. **Store**: Prometheus stores metrics and makes them available for querying by Grafana
 
 ## Technical Details
 

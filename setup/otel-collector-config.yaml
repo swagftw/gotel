@@ -31,25 +31,18 @@ processors:
 exporters:
   prometheus:
     endpoint: "0.0.0.0:8889"
-    namespace: gotel
     const_labels:
       exporter: otel-collector
 
   debug:
     verbosity: detailed
 
-  # Export to Prometheus via remote write
-  prometheusremotewrite:
-    endpoint: "http://prometheus:9090/api/v1/write"
-    tls:
-      insecure: true
-
 service:
   pipelines:
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [prometheus, debug, prometheusremotewrite]
+      exporters: [prometheus, debug]
 
   extensions: []
 

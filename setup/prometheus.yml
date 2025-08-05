@@ -35,7 +35,7 @@ scrape_configs:
   # Scrape GoTel application metrics (if running externally with native Prometheus exporter)
   - job_name: 'gotel-app'
     static_configs:
-      - targets: ['${GOTEL_SCRAPE_TARGET:-host.docker.internal:8080}']
+      - targets: ['${SCRAPE_TARGET:-host.docker.internal:8080}']
     scrape_interval: 5s
     metrics_path: /metrics
     honor_labels: true

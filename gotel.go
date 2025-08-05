@@ -1,46 +1,43 @@
-// Package gotel provides OpenTelemetry metrics capabilities with real-time delivery.
+// Package gotel provides OpenTelemetry metrics capabilities with automatic batching.
 // It offers a simple API for applications to send metrics to OpenTelemetry Collector
-// and compatible backends.
+// and compatible backends. OTEL SDK handles all batching, buffering, and reliability.
 package gotel
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/GetSimpl/gotel/pkg/client"
 	"github.com/GetSimpl/gotel/pkg/config"
 	"github.com/GetSimpl/gotel/pkg/metrics"
-	"github.com/panjf2000/ants/v2"
 )
 
-// GoTel is the main client for sending metrics to OpenTelemetry Collector
-type GoTel struct {
+type MetricName string
+
+const (
+	MetricCounterHttpRequestsTotal MetricName = "http.server.requests.total"
+	MetricHistHttpRequestDuration  MetricName = "http.server.request.duration"
+)
+
+// gotel is the main client for sending metrics to OpenTelemetry Collector
+// OTEL SDK automatically handles batching, buffering, and reliable delivery
+type gotel struct {
 	config          *config.Config
 	otelClient      *client.OtelClient
-	metricsRegistry *metrics.Registry
+	metricsRegistry metrics.Registry
 	ctx             context.Context
 	cancel          context.CancelFunc
-
-	// Rate limiting for metrics sending
-	lastMetricsSent time.Time
-	metricsMutex    sync.RWMutex
-
-	// Channel for async metrics sending
-	metricsChan chan struct{}
-
-	// Goroutine pool for fallback sync sends
-	pool *ants.Pool
-
-	// Metrics tracking
-	droppedRequests int64 // atomic counter
 }
 
-// New creates a new GoTel client with the provided configuration
-func New(cfg *config.Config) (*GoTel, error) {
+type Gotel interface {
+	IncrementCounter(name MetricName, unit metrics.Unit, labels map[string]interface{})
+	SetGauge(name MetricName, unit metrics.Unit, labels map[string]interface{})
+	RecordHistogram(name MetricName, unit metrics.Unit, labels map[string]interface{})
+}
+
+// New creates a new gotel client with the provided configuration
+func New(cfg *config.Config) (Gotel, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -50,232 +47,112 @@ func New(cfg *config.Config) (*GoTel, error) {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Create context for graceful shutdown
+	// Create context
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create OpenTelemetry client
+	// Create OTEL client
 	otelClient, err := client.NewOtelClient(cfg)
 	if err != nil {
-		cancel() // Clean up context
+		cancel()
 		return nil, fmt.Errorf("failed to create OTEL client: %w", err)
 	}
 
 	// Create metrics registry with OTEL client
-	metricsRegistry := metrics.NewRegistry(otelClient, ctx)
+	registry := metrics.NewRegistry(otelClient, ctx)
 
-	// Create goroutine pool for fallback sync sends
-	poolSize := 10 // Default pool size for fallback sends
-	if cfg.MetricBufferSize > 10 {
-		poolSize = cfg.MetricBufferSize / 10 // Pool size is 1/10th of buffer size
-	}
-
-	pool, err := ants.NewPool(poolSize, ants.WithNonblocking(false))
-	if err != nil {
-		cancel() // Clean up context
-		otelClient.Close()
-		return nil, fmt.Errorf("failed to create goroutine pool: %w", err)
-	}
-
-	gotel := &GoTel{
+	g := &gotel{
 		config:          cfg,
 		otelClient:      otelClient,
-		metricsRegistry: metricsRegistry,
+		metricsRegistry: registry,
 		ctx:             ctx,
 		cancel:          cancel,
-		metricsChan:     make(chan struct{}, cfg.MetricBufferSize),
-		pool:            pool,
-		droppedRequests: 0,
 	}
 
-	// Start background metrics worker if async is enabled
-	if cfg.EnableAsyncMetrics {
-		go gotel.metricsWorker()
+	if cfg.EnableDebug {
+		log.Printf("gotel client initialized with endpoint: %s", cfg.OtelEndpoint)
+		log.Printf("OTEL SDK will automatically batch and send metrics")
 	}
 
-	if cfg.LogLevel == "debug" || cfg.EnableDebug {
-		log.Printf("GoTel initialized with OTEL endpoint: %s", cfg.OtelEndpoint)
-		log.Printf("Async metrics: %v, Buffer size: %d", cfg.EnableAsyncMetrics, cfg.MetricBufferSize)
-	}
-
-	return gotel, nil
-}
-
-// NewWithDefaults creates a new GoTel client with default configuration
-// This is the simplest way to get started with GoTel
-func NewWithDefaults() (*GoTel, error) {
-	cfg := config.FromEnv()
-	return New(cfg)
+	return g, nil
 }
 
 // Counter creates or retrieves a counter metric
-func (g *GoTel) Counter(name string, labels map[string]string) *metrics.Counter {
-	return g.metricsRegistry.GetOrCreateCounter(name, labels)
+// Metrics are automatically batched and sent by OTEL SDK
+func (g *gotel) Counter(name string, unit metrics.Unit, labels map[string]string) *metrics.Counter {
+	return g.metricsRegistry.GetOrCreateCounter(name, labels, unit)
 }
 
 // Gauge creates or retrieves a gauge metric
-func (g *GoTel) Gauge(name string, labels map[string]string) *metrics.Gauge {
-	return g.metricsRegistry.GetOrCreateGauge(name, labels)
+// Metrics are automatically batched and sent by OTEL SDK
+func (g *gotel) Gauge(name string, unit metrics.Unit, labels map[string]string) *metrics.Gauge {
+	return g.metricsRegistry.GetOrCreateGauge(name, labels, unit)
 }
 
-// SendMetricsSync sends all registered metrics synchronously with rate limiting
-func (g *GoTel) SendMetricsSync() error {
-	g.metricsMutex.Lock()
-	defer g.metricsMutex.Unlock()
+// Histogram creates or retrieves a histogram metric
+// Metrics are automatically batched and sent by OTEL SDK
+func (g *gotel) Histogram(name string, unit metrics.Unit, labels map[string]string) *metrics.Histogram {
+	return g.metricsRegistry.GetOrCreateHistogram(name, labels, unit)
+}
 
-	// Check if enough time has passed since last send (rate limiting)
-	now := time.Now()
-	if now.Sub(g.lastMetricsSent) < g.config.MinSendInterval {
-		return nil // Skip sending due to rate limit
-	}
-
-	g.lastMetricsSent = now
-
-	// Force flush OTEL metrics
+// ForceFlush forces immediate export of all pending metrics
+// Usually not needed - OTEL SDK automatically exports on schedule
+// Use only when you need immediate delivery (e.g., before shutdown)
+func (g *gotel) ForceFlush() error {
 	return g.otelClient.ForceFlush()
 }
 
-// SendMetricsAsync sends metrics asynchronously via buffered channel with fallback to sync
-// If channel is full, falls back to pooled goroutine to ensure no metrics are lost
-func (g *GoTel) SendMetricsAsync() {
-	select {
-	case g.metricsChan <- struct{}{}:
-		// Successfully queued for async worker
-	default:
-		// Channel full, fallback to pooled goroutine for immediate send
-		if g.config.LogLevel == "debug" || g.config.EnableDebug {
-			log.Printf("Metrics channel full, falling back to pooled sync send")
-		}
-
-		// Submit to goroutine pool for fallback sync send
-		err := g.pool.Submit(func() {
-			g.sendMetricsWithRateLimit()
-		})
-
-		if err != nil {
-			// Pool is also full or closed, count as dropped
-			atomic.AddInt64(&g.droppedRequests, 1)
-			if g.config.LogLevel == "debug" || g.config.EnableDebug {
-				log.Printf("Goroutine pool full, dropped requests: %d", atomic.LoadInt64(&g.droppedRequests))
-			}
-		}
-	}
-}
-
 // IncrementCounter is a convenience method to increment a counter by 1
-func (g *GoTel) IncrementCounter(name string, labels map[string]string) error {
-	counter := g.Counter(name, labels)
+// The metric will be automatically batched and sent by OTEL SDK
+func (g *gotel) IncrementCounter(name string, unit metrics.Unit, labels map[string]string) {
+	counter := g.Counter(name, unit, labels)
 	counter.Inc()
-
-	if g.config.EnableAsyncMetrics {
-		g.SendMetricsAsync()
-		return nil
-	}
-
-	return g.SendMetricsSync()
 }
 
 // SetGauge is a convenience method to set a gauge value
-func (g *GoTel) SetGauge(name string, value float64, labels map[string]string) error {
-	gauge := g.Gauge(name, labels)
+// The metric will be automatically batched and sent by OTEL SDK
+func (g *gotel) SetGauge(name string, value float64, unit metrics.Unit, labels map[string]string) {
+	gauge := g.Gauge(name, unit, labels)
 	gauge.Set(value)
-
-	if g.config.EnableAsyncMetrics {
-		g.SendMetricsAsync()
-		return nil
-	}
-
-	return g.SendMetricsSync()
 }
 
-// GetRegistry returns the internal metrics registry for advanced usage
-func (g *GoTel) GetRegistry() *metrics.Registry {
+// RecordHistogram is a convenience method to record a value in a histogram
+// The metric will be automatically batched and sent by OTEL SDK
+func (g *gotel) RecordHistogram(name string, value float64, labels map[string]string) {
+	histogram := g.Histogram(name, labels)
+	histogram.Record(value)
+}
+
+// GetRegistry returns the metrics registry for advanced usage
+func (g *gotel) GetRegistry() *metrics.Registry {
 	return g.metricsRegistry
 }
 
 // GetConfig returns the current configuration
-func (g *GoTel) GetConfig() *config.Config {
+func (g *gotel) GetConfig() *config.Config {
 	return g.config
 }
 
-// Close gracefully shuts down the GoTel client
-func (g *GoTel) Close() error {
-	// Send any remaining metrics
-	if err := g.SendMetricsSync(); err != nil {
-		log.Printf("Failed to send final metrics: %v", err)
-	}
-
-	// Cancel context to stop any background goroutines
+// Close gracefully shuts down the gotel client
+func (g *gotel) Close() error {
 	g.cancel()
 
-	// Close the goroutine pool
-	g.pool.Release()
+	if g.config.EnableDebug {
+		log.Println("Shutting down gotel client...")
+	}
+
+	// Force flush any remaining metrics before shutdown
+	if err := g.otelClient.ForceFlush(); err != nil {
+		log.Printf("Failed to flush metrics during shutdown: %v", err)
+	}
 
 	// Close OTEL client
 	if err := g.otelClient.Close(); err != nil {
-		log.Printf("Failed to close OTEL client: %v", err)
+		return fmt.Errorf("failed to close OTEL client: %w", err)
 	}
 
-	if g.config.LogLevel == "debug" || g.config.EnableDebug {
-		dropped := atomic.LoadInt64(&g.droppedRequests)
-		log.Printf("GoTel client shut down. Dropped requests: %d", dropped)
+	if g.config.EnableDebug {
+		log.Println("gotel client shut down successfully")
 	}
 
 	return nil
-}
-
-// Health returns basic health information about the GoTel client
-func (g *GoTel) Health() map[string]interface{} {
-	return map[string]interface{}{
-		"status":           "healthy",
-		"otel_endpoint":    g.config.OtelEndpoint,
-		"metrics_count":    g.metricsRegistry.MetricsCount(),
-		"async_enabled":    g.config.EnableAsyncMetrics,
-		"config_valid":     g.config.Validate() == nil,
-		"pool_running":     g.pool.Running(),
-		"pool_free":        g.pool.Free(),
-		"pool_capacity":    g.pool.Cap(),
-		"dropped_requests": atomic.LoadInt64(&g.droppedRequests),
-	}
-}
-
-// metricsWorker runs in background to send metrics asynchronously with rate limiting
-func (g *GoTel) metricsWorker() {
-	ticker := time.NewTicker(g.config.SendInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-g.ctx.Done():
-			// Send final metrics before shutdown
-			g.sendMetricsWithRateLimit()
-			return
-		case <-ticker.C:
-			// Periodic send
-			g.sendMetricsWithRateLimit()
-		case <-g.metricsChan:
-			// Immediate send requested from SendMetricsAsync()
-			g.sendMetricsWithRateLimit()
-		}
-	}
-}
-
-// sendMetricsWithRateLimit sends metrics with rate limiting to prevent duplicate timestamps
-func (g *GoTel) sendMetricsWithRateLimit() {
-	g.metricsMutex.Lock()
-	defer g.metricsMutex.Unlock()
-
-	// Check if enough time has passed since last send
-	now := time.Now()
-	if now.Sub(g.lastMetricsSent) < g.config.MinSendInterval {
-		return
-	}
-
-	g.lastMetricsSent = now
-
-	// Force flush OTEL metrics
-	if err := g.otelClient.ForceFlush(); err != nil {
-		if g.config.LogLevel == "debug" || g.config.EnableDebug {
-			log.Printf("Failed to flush metrics: %v", err)
-		}
-	}
 }

@@ -6,6 +6,18 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/GetSimpl/gotel/pkg/client"
+)
+
+type Unit string
+
+const (
+	UnitPercent      Unit = "%"
+	UnitSeconds      Unit = "s"
+	UnitMilliseconds Unit = "ms"
+	UnitBytes        Unit = "By"
+	UnitRequest      Unit = "{request}"
 )
 
 // Counter represents a metrics counter that wraps OTEL counter
@@ -125,33 +137,66 @@ func (g *Gauge) Get() float64 {
 	return g.value
 }
 
+// Histogram represents a histogram metric that wraps OTEL histogram
+type Histogram struct {
+	name          string
+	labels        map[string]string
+	otelHistogram metric.Float64Histogram
+	ctx           context.Context
+	attributes    []attribute.KeyValue
+}
+
+// NewHistogram creates a new histogram metric
+func NewHistogram(name string, labels map[string]string, otelHistogram metric.Float64Histogram, ctx context.Context) *Histogram {
+	attrs := labelsToAttributes(labels)
+	return &Histogram{
+		name:          name,
+		labels:        labels,
+		otelHistogram: otelHistogram,
+		ctx:           ctx,
+		attributes:    attrs,
+	}
+}
+
+// Record records a value for the histogram
+func (h *Histogram) Record(value float64) {
+	// Record to OTEL
+	if h.otelHistogram != nil {
+		h.otelHistogram.Record(h.ctx, value, metric.WithAttributes(h.attributes...))
+	}
+}
+
 // Registry holds all metrics and interfaces with OTEL client
-type Registry struct {
+type registry struct {
 	counters   map[string]*Counter
 	gauges     map[string]*Gauge
-	otelClient OtelClient
+	histograms map[string]*Histogram
+	otelClient *client.OtelClient
 	ctx        context.Context
 	mutex      sync.RWMutex
 }
 
 // OtelClient interface for dependency injection
-type OtelClient interface {
-	GetOrCreateCounter(name string, labels map[string]string) (metric.Int64Counter, error)
-	GetOrCreateGauge(name string, labels map[string]string) (metric.Float64Gauge, error)
+type Registry interface {
+	GetOrCreateCounter(name string, unit Unit, labels map[string]string) *Counter
+	GetOrCreateGauge(name string, unit Unit, labels map[string]string) *Gauge
+	GetOrCreateHistogram(name string, unit Unit, labels map[string]string) *Histogram
 }
 
 // NewRegistry creates a new metrics registry
-func NewRegistry(otelClient OtelClient, ctx context.Context) *Registry {
-	return &Registry{
+func NewRegistry(otelClient *client.OtelClient, ctx context.Context) Registry {
+	return &registry{
 		counters:   make(map[string]*Counter),
 		gauges:     make(map[string]*Gauge),
+		histograms: make(map[string]*Histogram),
 		otelClient: otelClient,
 		ctx:        ctx,
+		mutex:      sync.RWMutex{},
 	}
 }
 
 // GetOrCreateCounter gets an existing counter or creates a new one
-func (r *Registry) GetOrCreateCounter(name string, labels map[string]string) *Counter {
+func (r *registry) GetOrCreateCounter(name string, unit Unit, labels map[string]string) *Counter {
 	key := metricKey(name, labels)
 
 	r.mutex.RLock()
@@ -189,7 +234,7 @@ func (r *Registry) GetOrCreateCounter(name string, labels map[string]string) *Co
 }
 
 // GetOrCreateGauge gets an existing gauge or creates a new one
-func (r *Registry) GetOrCreateGauge(name string, labels map[string]string) *Gauge {
+func (r *registry) GetOrCreateGauge(name string, unit Unit, labels map[string]string) *Gauge {
 	key := metricKey(name, labels)
 
 	r.mutex.RLock()
@@ -226,15 +271,52 @@ func (r *Registry) GetOrCreateGauge(name string, labels map[string]string) *Gaug
 	return gauge
 }
 
+// GetOrCreateHistogram gets an existing histogram or creates a new one
+func (r *registry) GetOrCreateHistogram(name string, unit Unit, labels map[string]string) *Histogram {
+	key := metricKey(name, labels)
+
+	r.mutex.RLock()
+	if histogram, exists := r.histograms[key]; exists {
+		r.mutex.RUnlock()
+		return histogram
+	}
+	r.mutex.RUnlock()
+
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	// Check again after acquiring write lock
+	if histogram, exists := r.histograms[key]; exists {
+		return histogram
+	}
+
+	// Create OTEL histogram
+	otelHistogram, err := r.otelClient.GetOrCreateHistogram(name, labels)
+	if err != nil {
+		// Log error but don't fail - return a dummy histogram
+		histogram := &Histogram{
+			name:   name,
+			labels: labels,
+			ctx:    r.ctx,
+		}
+		r.histograms[key] = histogram
+		return histogram
+	}
+
+	histogram := NewHistogram(name, labels, otelHistogram, r.ctx)
+	r.histograms[key] = histogram
+	return histogram
+}
+
 // MetricsCount returns the total number of registered metrics
-func (r *Registry) MetricsCount() int {
+func (r *registry) MetricsCount() int {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	return len(r.counters) + len(r.gauges)
+	return len(r.counters) + len(r.gauges) + len(r.histograms)
 }
 
 // GetCounter returns a counter by name
-func (r *Registry) GetCounter(name string) (*Counter, bool) {
+func (r *registry) GetCounter(name string) (*Counter, bool) {
 	key := metricKey(name, nil)
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -255,7 +337,7 @@ func (r *Registry) GetCounter(name string) (*Counter, bool) {
 }
 
 // GetGauge returns a gauge by name
-func (r *Registry) GetGauge(name string) (*Gauge, bool) {
+func (r *registry) GetGauge(name string) (*Gauge, bool) {
 	key := metricKey(name, nil)
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -275,8 +357,29 @@ func (r *Registry) GetGauge(name string) (*Gauge, bool) {
 	return nil, false
 }
 
+// GetHistogram returns a histogram by name
+func (r *registry) GetHistogram(name string) (*Histogram, bool) {
+	key := metricKey(name, nil)
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	// Try exact match first
+	if histogram, exists := r.histograms[key]; exists {
+		return histogram, exists
+	}
+
+	// If not found, try finding any histogram with that name
+	for _, histogram := range r.histograms {
+		if histogram.name == name {
+			return histogram, true
+		}
+	}
+
+	return nil, false
+}
+
 // Collect returns basic metrics information (for compatibility)
-func (r *Registry) Collect() []MetricInfo {
+func (r *registry) Collect() []MetricInfo {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
@@ -297,6 +400,15 @@ func (r *Registry) Collect() []MetricInfo {
 			Type:   "gauge",
 			Value:  gauge.Get(),
 			Labels: gauge.labels,
+		})
+	}
+
+	for _, histogram := range r.histograms {
+		metrics = append(metrics, MetricInfo{
+			Name:   histogram.name,
+			Type:   "histogram",
+			Value:  0, // Histograms don't have a single value
+			Labels: histogram.labels,
 		})
 	}
 

@@ -2,7 +2,6 @@ package client
 
 import (
 	"testing"
-	"time"
 
 	"github.com/GetSimpl/gotel/pkg/config"
 )
@@ -10,8 +9,6 @@ import (
 func TestNewOtelClient(t *testing.T) {
 	cfg := config.Default()
 	cfg.OtelEndpoint = "localhost:4318"
-	cfg.HTTPTimeout = 10 * time.Second
-	cfg.RetryCount = 2
 	cfg.Insecure = true
 
 	client, err := NewOtelClient(cfg)
@@ -191,10 +188,8 @@ func TestOtelClient_ForceFlush(t *testing.T) {
 func TestOtelClient_GetStats(t *testing.T) {
 	cfg := config.Default()
 	cfg.OtelEndpoint = "localhost:4318"
-	cfg.HTTPTimeout = 15 * time.Second
-	cfg.AppName = "test-app"
-	cfg.AppVersion = "1.0.0"
-	cfg.Instance = "test-instance"
+	cfg.ServiceName = "test-app"
+	cfg.ServiceVersion = "1.0.0"
 	cfg.Environment = "test"
 	cfg.Insecure = true
 
@@ -210,15 +205,11 @@ func TestOtelClient_GetStats(t *testing.T) {
 		t.Errorf("Expected endpoint %s, got %s", cfg.OtelEndpoint, stats["otel_endpoint"])
 	}
 
-	if stats["timeout"] != cfg.HTTPTimeout.String() {
-		t.Errorf("Expected timeout %s, got %s", cfg.HTTPTimeout.String(), stats["timeout"])
+	if stats["service_name"] != cfg.ServiceName {
+		t.Errorf("Expected service name %s, got %s", cfg.ServiceName, stats["service_name"])
 	}
 
-	if stats["service_name"] != cfg.AppName {
-		t.Errorf("Expected service name %s, got %s", cfg.AppName, stats["service_name"])
-	}
-
-	if stats["service_version"] != cfg.AppVersion {
-		t.Errorf("Expected service version %s, got %s", cfg.AppVersion, stats["service_version"])
+	if stats["service_version"] != cfg.ServiceVersion {
+		t.Errorf("Expected service version %s, got %s", cfg.ServiceVersion, stats["service_version"])
 	}
 }
