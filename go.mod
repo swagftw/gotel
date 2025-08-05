@@ -1,4 +1,4 @@
-module github.com/GetSimpl/gotel
+module github.com/swagftw/gotel
 
 go 1.24
 

@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 
-	"github.com/GetSimpl/gotel/pkg/config"
+	"github.com/swagftw/gotel/pkg/config"
 )
 
 type Counter interface {

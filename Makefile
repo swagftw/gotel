@@ -95,7 +95,7 @@ dev-setup: tidy
 
 # Show module information
 info:
-	@echo "Module: github.com/GetSimpl/gotel"
+	@echo "Module: github.com/swagftw/gotel"
 	@echo "Go version: $(shell go version)"
 	@echo "Dependencies:"
 	@go list -m all

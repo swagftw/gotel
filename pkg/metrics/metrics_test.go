@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/GetSimpl/gotel/pkg/client"
+	"github.com/swagftw/gotel/pkg/client"
 )
 
 // Mock implementations for testing

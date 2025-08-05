@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/GetSimpl/gotel/pkg/client"
-	"github.com/GetSimpl/gotel/pkg/config"
-	"github.com/GetSimpl/gotel/pkg/metrics"
+	"github.com/swagftw/gotel/pkg/client"
+	"github.com/swagftw/gotel/pkg/config"
+	"github.com/swagftw/gotel/pkg/metrics"
 )
 
 // gotel is the main client for sending metrics to OpenTelemetry Collector
