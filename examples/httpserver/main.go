@@ -29,7 +29,7 @@ func main() {
 
 	defer otelClient.Close()
 
-	svr := gin.New()
+	svr := gin.Default()
 
 	svr.GET("/", func(context *gin.Context) {
 		startTime := time.Now()
@@ -50,7 +50,11 @@ func main() {
 		// Record latency
 		duration := time.Since(startTime).Seconds()
 
-		buckets := []float64{0.001, 0.01, 0.1, 0.5, 1.0} // 1ms to 1s buckets
+		buckets := []float64{
+			0.001, 0.002, 0.003, 0.004, 0.005, 0.0075, 0.01, 0.015, 0.02, 0.025,
+			0.03, 0.04, 0.05, 0.075, 0.1, 0.25, 0.5, 1.0,
+		}
+
 		otelClient.RecordHistogram(duration, metrics.MetricHistHttpRequestDuration, metrics.UnitSeconds, buckets, map[string]string{
 			"http_method": context.Request.Method,
 			"http_route":  context.FullPath(),
