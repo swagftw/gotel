@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -18,23 +17,57 @@ import (
 	"github.com/GetSimpl/gotel/pkg/config"
 )
 
-// OtelClient handles communication with OpenTelemetry Collector
-type OtelClient struct {
+type Counter interface {
+	Inc(labels map[string]string)
+	Add(delta int64, labels map[string]string)
+}
+
+type Gauge interface {
+	// Set sets the gauge to a specific value
+	Set(value float64, labels map[string]string)
+}
+
+type Histogram interface {
+	// Record records a value in the histogram
+	Record(value float64, labels map[string]string)
+}
+
+type OTelClient interface {
+	CreateCounter(name, unit string) (Counter, error)
+	CreateGauge(name, unit string) (Gauge, error)
+	CreateHistogram(name, unit string, buckets []float64) (Histogram, error)
+	Close() error
+}
+
+// otelClient handles communication with OpenTelemetry Collector
+// instrument creation is stateless; caching and mutexes are managed by metrics.Registry
+type otelClient struct {
 	config        *config.Config
 	meterProvider *sdkmetric.MeterProvider
 	meter         metric.Meter
 	exporter      *otlpmetrichttp.Exporter
-	counters      map[string]metric.Int64Counter
-	gauges        map[string]metric.Float64Gauge
-	histograms    map[string]metric.Float64Histogram
-	mutex         sync.RWMutex
 	ctx           context.Context
 	cancel        context.CancelFunc
 	resource      *resource.Resource
 }
 
+type counter struct {
+	ctx         context.Context
+	otelCounter metric.Int64Counter
+}
+
+type gauge struct {
+	ctx       context.Context
+	otelGauge metric.Float64Gauge
+}
+
+type histogram struct {
+	ctx           context.Context
+	otelHistogram metric.Float64Histogram
+}
+
 // NewOtelClient creates a new OpenTelemetry client
-func NewOtelClient(cfg *config.Config) (*OtelClient, error) {
+func NewOtelClient(cfg *config.Config) (OTelClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Create resource with service information
@@ -73,7 +106,7 @@ func NewOtelClient(cfg *config.Config) (*OtelClient, error) {
 		sdkmetric.WithReader(
 			sdkmetric.NewPeriodicReader(
 				exporter,
-				sdkmetric.WithInterval(time.Duration(cfg.SendInterval)),
+				sdkmetric.WithInterval(time.Second*time.Duration(cfg.SendInterval)),
 			),
 		),
 	)
@@ -84,19 +117,17 @@ func NewOtelClient(cfg *config.Config) (*OtelClient, error) {
 	// Create meter
 	meter := meterProvider.Meter(cfg.ServiceName)
 
-	client := &OtelClient{
+	client := &otelClient{
 		config:        cfg,
 		meterProvider: meterProvider,
 		meter:         meter,
 		exporter:      exporter,
-		counters:      make(map[string]metric.Int64Counter),
-		gauges:        make(map[string]metric.Float64Gauge),
-		histograms:    make(map[string]metric.Float64Histogram),
 		ctx:           ctx,
 		cancel:        cancel,
 		resource:      res,
 	}
 
+	// TODO: implement logger
 	if cfg.EnableDebug {
 		log.Printf("OTEL client initialized with endpoint: %s", cfg.OtelEndpoint)
 		log.Printf("Send interval: %v", 30*time.Second)
@@ -105,158 +136,65 @@ func NewOtelClient(cfg *config.Config) (*OtelClient, error) {
 	return client, nil
 }
 
-// GetOrCreateCounter gets an existing counter or creates a new one
-func (o *OtelClient) GetOrCreateCounter(name string, labels map[string]string) (metric.Int64Counter, error) {
-	key := metricKey(name, labels)
-
-	// Try to get existing counter with read lock
-	o.mutex.RLock()
-	if counter, exists := o.counters[key]; exists {
-		o.mutex.RUnlock()
-		return counter, nil
-	}
-	o.mutex.RUnlock()
-
-	// Need to create new counter, acquire write lock
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-
-	// Double-check in case another goroutine created it while we waited
-	if counter, exists := o.counters[key]; exists {
-		return counter, nil
-	}
-
-	counter, err := o.meter.Int64Counter(name)
+// CreateCounter creates a new counter instrument
+func (o *otelClient) CreateCounter(name, unit string) (Counter, error) {
+	otelCounter, err := o.meter.Int64Counter(name, metric.WithUnit(unit))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create counter %s: %w", name, err)
+		// TODO: add error log
+		return nil, err
 	}
 
-	o.counters[key] = counter
-	return counter, nil
+	return &counter{ctx: o.ctx, otelCounter: otelCounter}, nil
 }
 
-// GetOrCreateGauge gets an existing gauge or creates a new one
-func (o *OtelClient) GetOrCreateGauge(name string, labels map[string]string) (metric.Float64Gauge, error) {
-	key := metricKey(name, labels)
-
-	// Try to get existing gauge with read lock
-	o.mutex.RLock()
-	if gauge, exists := o.gauges[key]; exists {
-		o.mutex.RUnlock()
-		return gauge, nil
-	}
-	o.mutex.RUnlock()
-
-	// Need to create new gauge, acquire write lock
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-
-	// Double-check in case another goroutine created it while we waited
-	if gauge, exists := o.gauges[key]; exists {
-		return gauge, nil
-	}
-
-	gauge, err := o.meter.Float64Gauge(name)
+// CreateGauge creates a new gauge instrument
+func (o *otelClient) CreateGauge(name, unit string) (Gauge, error) {
+	otelGauge, err := o.meter.Float64Gauge(name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gauge %s: %w", name, err)
+		// TODO: add error log
+		return nil, err
 	}
 
-	o.gauges[key] = gauge
-	return gauge, nil
+	return &gauge{ctx: o.ctx, otelGauge: otelGauge}, nil
 }
 
-// IncrementCounter increments a counter by the specified amount
-func (o *OtelClient) IncrementCounter(name string, labels map[string]string, value int64) error {
-	// Create a copy of labels to avoid modifying the original map
-	labelsCopy := make(map[string]string, len(labels)+2)
-	for k, v := range labels {
-		labelsCopy[k] = v
-	}
-	labelsCopy["service_name"] = o.config.ServiceName
-	labelsCopy["service_environment"] = o.config.Environment
-
-	counter, err := o.GetOrCreateCounter(name, labelsCopy)
+// CreateHistogram creates a new histogram instrument
+func (o *otelClient) CreateHistogram(name, unit string, buckets []float64) (Histogram, error) {
+	otelHistogram, err := o.meter.Float64Histogram(name, metric.WithUnit(unit), metric.WithExplicitBucketBoundaries(buckets...))
 	if err != nil {
-		return err
+		// TODO: add error log
+		return nil, err
 	}
 
-	attrs := labelsToAttributes(labelsCopy)
-	counter.Add(o.ctx, value, metric.WithAttributes(attrs...))
-	return nil
+	return &histogram{ctx: o.ctx, otelHistogram: otelHistogram}, nil
 }
 
-// SetGauge sets a gauge to the specified value
-func (o *OtelClient) SetGauge(name string, labels map[string]string, value float64) error {
-	// Create a copy of labels to avoid modifying the original map
-	labelsCopy := make(map[string]string, len(labels)+2)
-	for k, v := range labels {
-		labelsCopy[k] = v
-	}
-	labelsCopy["service_name"] = o.config.ServiceName
-	labelsCopy["service_environment"] = o.config.Environment
-
-	gauge, err := o.GetOrCreateGauge(name, labelsCopy)
-	if err != nil {
-		return err
-	}
-
-	attrs := labelsToAttributes(labelsCopy)
-	gauge.Record(o.ctx, value, metric.WithAttributes(attrs...))
-	return nil
+// Inc is Add(1)
+func (c *counter) Inc(labels map[string]string) {
+	attrs := labelsToAttributes(labels)
+	c.otelCounter.Add(c.ctx, 1, metric.WithAttributes(attrs...))
 }
 
-// GetOrCreateHistogram gets an existing histogram or creates a new one
-func (o *OtelClient) GetOrCreateHistogram(name string, labels map[string]string) (metric.Float64Histogram, error) {
-	key := metricKey(name, labels)
-
-	// Try to get existing histogram with read lock
-	o.mutex.RLock()
-	if histogram, exists := o.histograms[key]; exists {
-		o.mutex.RUnlock()
-		return histogram, nil
-	}
-	o.mutex.RUnlock()
-
-	// Need to create new histogram, acquire write lock
-	o.mutex.Lock()
-	defer o.mutex.Unlock()
-
-	// Double-check in case another goroutine created it while we waited
-	if histogram, exists := o.histograms[key]; exists {
-		return histogram, nil
-	}
-
-	histogram, err := o.meter.Float64Histogram(name)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create histogram %s: %w", name, err)
-	}
-
-	o.histograms[key] = histogram
-	return histogram, nil
+// Add adds a delta to the counter
+func (c *counter) Add(delta int64, labels map[string]string) {
+	attrs := labelsToAttributes(labels)
+	c.otelCounter.Add(c.ctx, delta, metric.WithAttributes(attrs...))
 }
 
-// RecordHistogram records a value in a histogram
-func (o *OtelClient) RecordHistogram(name string, labels map[string]string, value float64) error {
-	// Create a copy of labels to avoid modifying the original map
-	labelsCopy := make(map[string]string, len(labels)+2)
-	for k, v := range labels {
-		labelsCopy[k] = v
-	}
-	labelsCopy["service_name"] = o.config.ServiceName
-	labelsCopy["service_environment"] = o.config.Environment
+// Set sets gauge to the specified value
+func (g *gauge) Set(value float64, labels map[string]string) {
+	attrs := labelsToAttributes(labels)
+	g.otelGauge.Record(g.ctx, value, metric.WithAttributes(attrs...))
+}
 
-	histogram, err := o.GetOrCreateHistogram(name, labelsCopy)
-	if err != nil {
-		return err
-	}
-
-	attrs := labelsToAttributes(labelsCopy)
-	histogram.Record(o.ctx, value, metric.WithAttributes(attrs...))
-	return nil
+// Record records a value in a histogram
+func (h *histogram) Record(value float64, labels map[string]string) {
+	attrs := labelsToAttributes(labels)
+	h.otelHistogram.Record(h.ctx, value, metric.WithAttributes(attrs...))
 }
 
 // ForceFlush forces all pending metrics to be sent
-func (o *OtelClient) ForceFlush() error {
+func (o *otelClient) ForceFlush() error {
 	ctx, cancel := context.WithTimeout(o.ctx, 30*time.Second) // Default timeout
 	defer cancel()
 
@@ -264,7 +202,7 @@ func (o *OtelClient) ForceFlush() error {
 }
 
 // Close gracefully shuts down the client
-func (o *OtelClient) Close() error {
+func (o *otelClient) Close() error {
 	if o.config.EnableDebug {
 		log.Println("Shutting down OTEL client")
 	}
@@ -288,22 +226,6 @@ func (o *OtelClient) Close() error {
 	return nil
 }
 
-// GetStats returns client statistics
-func (o *OtelClient) GetStats() map[string]interface{} {
-	o.mutex.RLock()
-	defer o.mutex.RUnlock()
-
-	return map[string]interface{}{
-		"otel_endpoint":    o.config.OtelEndpoint,
-		"counters_count":   len(o.counters),
-		"gauges_count":     len(o.gauges),
-		"histograms_count": len(o.histograms),
-		"service_name":     o.config.ServiceName,
-		"service_version":  o.config.ServiceVersion,
-		"environment":      o.config.Environment,
-	}
-}
-
 // labelsToAttributes converts a map of labels to OTEL attributes
 func labelsToAttributes(labels map[string]string) []attribute.KeyValue {
 	if len(labels) == 0 {
@@ -315,23 +237,4 @@ func labelsToAttributes(labels map[string]string) []attribute.KeyValue {
 		attrs = append(attrs, attribute.String(k, v))
 	}
 	return attrs
-}
-
-// metricKey creates a unique key for a metric based on name and labels
-func metricKey(name string, labels map[string]string) string {
-	if len(labels) == 0 {
-		return name
-	}
-
-	key := name + "{"
-	first := true
-	for k, v := range labels {
-		if !first {
-			key += ","
-		}
-		key += k + "=" + v
-		first = false
-	}
-	key += "}"
-	return key
 }
