@@ -15,6 +15,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 
 	"github.com/swagftw/gotel/pkg/config"
+	"github.com/swagftw/gotel/pkg/logger"
 )
 
 type Counter interface {
@@ -69,6 +70,10 @@ type histogram struct {
 // NewOtelClient creates a new OpenTelemetry client
 func NewOtelClient(cfg *config.Config) (OTelClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		logger.Logger.Error("error in otel client", "err", err.Error())
+	}))
 
 	// Create resource with service information
 	res, err := resource.New(ctx,

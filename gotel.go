@@ -11,6 +11,7 @@ import (
 	"github.com/swagftw/gotel/pkg/client"
 	"github.com/swagftw/gotel/pkg/config"
 	"github.com/swagftw/gotel/pkg/metrics"
+	"github.com/swagftw/gotel/pkg/logger"
 )
 
 // gotel is the main client for sending metrics to OpenTelemetry Collector
@@ -35,6 +36,8 @@ func New(cfg *config.Config) (Gotel, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
+
+	logger.InitLogger()
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
@@ -62,8 +65,8 @@ func New(cfg *config.Config) (Gotel, error) {
 	}
 
 	if cfg.EnableDebug {
-		log.Printf("gotel client initialized with endpoint: %s", cfg.OtelEndpoint)
-		log.Printf("OTEL SDK will automatically batch and send metrics")
+		logger.Logger.Info("gotel client initialized", "endpoint", cfg.OtelEndpoint)
+		logger.Logger.Info("OTEL SDK will automatically batch and send metrics")
 	}
 
 	return g, nil
