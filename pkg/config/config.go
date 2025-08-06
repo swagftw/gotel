@@ -13,18 +13,17 @@ type Config struct {
 	// OTEL settings
 	OtelEndpoint string            `mapstructure:"otel_endpoint"`
 	OtelHeaders  map[string]string `mapstructure:"otel_headers"`
-	Insecure     bool              `mapstructure:"insecure"`
 
 	// Application identification
 	ServiceName    string `mapstructure:"service_name"`
 	ServiceVersion string `mapstructure:"service_version"`
-	Environment    string `mapstructure:"environment"`
+	Environment    string `mapstructure:"env"`
 
 	// Timing settings
 	SendInterval int `mapstructure:"send_interval"`
 
 	// Debug and logging
-	EnableDebug bool `mapstructure:"debug"`
+	EnableDebug bool `mapstructure:"otel_debug"`
 }
 
 // Default returns a new Config with default values
@@ -32,7 +31,6 @@ func Default() *Config {
 	return &Config{
 		OtelEndpoint:   "localhost:4318",
 		OtelHeaders:    make(map[string]string),
-		Insecure:       true,
 		ServiceName:    "gotel-app",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
@@ -71,24 +69,21 @@ func LoadConfig() (*Config, error) {
 func setDefaults(v *viper.Viper, cfg *Config) {
 	v.SetDefault("otel_endpoint", cfg.OtelEndpoint)
 	v.SetDefault("debug", cfg.EnableDebug)
-	v.SetDefault("environment", cfg.Environment)
+	v.SetDefault("env", cfg.Environment)
 	v.SetDefault("send_interval", cfg.SendInterval)
 	v.SetDefault("app_name", cfg.ServiceName)
 	v.SetDefault("app_version", cfg.ServiceVersion)
-	v.SetDefault("insecure", cfg.Insecure)
 }
 
 // setupEnvironmentBindings configures environment variable bindings
 func setupEnvironmentBindings(v *viper.Viper) {
 	envBindings := map[string]string{
-		"otel_endpoint":        "OTEL_ENDPOINT",
-		"debug":                "DEBUG",
-		"environment":          "ENVIRONMENT",
-		"enable_async_metrics": "OTEL_ENABLE_ASYNC_METRICS",
-		"send_interval":        "OTEL_SEND_INTERVAL",
-		"service_name":         "OTEL_SERVICE_NAME",
-		"service_version":      "OTEL_SERVICE_VERSION",
-		"insecure":             "OTEL_INSECURE",
+		"otel_endpoint":   "OTEL_ENDPOINT",
+		"debug":           "OTEL_DEBUG",
+		"environment":     "ENV",
+		"send_interval":   "OTEL_SEND_INTERVAL",
+		"service_name":    "OTEL_SERVICE_NAME",
+		"service_version": "OTEL_SERVICE_VERSION",
 	}
 
 	for key, env := range envBindings {
