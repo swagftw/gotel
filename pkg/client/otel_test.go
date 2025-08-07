@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/swagftw/gotel/pkg/config"
+	"github.com/GetSimpl/gotel/pkg/config"
 )
 
 func TestNewOtelClient(t *testing.T) {
