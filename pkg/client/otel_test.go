@@ -21,7 +21,7 @@ func TestNewOtelClient(t *testing.T) {
 				ServiceName:    "test-service",
 				ServiceVersion: "1.0.0",
 				Environment:    "local",
-				OtelEndpoint:   "localhost:4318",
+				OtelEndpoint:   "http://localhost:4318",
 				SendInterval:   10,
 				EnableDebug:    false,
 			},
@@ -33,7 +33,7 @@ func TestNewOtelClient(t *testing.T) {
 				ServiceName:    "test-service",
 				ServiceVersion: "1.0.0",
 				Environment:    "local", // Use local environment for tests to avoid HTTPS issues
-				OtelEndpoint:   "localhost:4318",
+				OtelEndpoint:   "http://localhost:4318",
 				SendInterval:   30,
 				EnableDebug:    false,
 			},
@@ -45,7 +45,7 @@ func TestNewOtelClient(t *testing.T) {
 				ServiceName:    "",
 				ServiceVersion: "1.0.0",
 				Environment:    "local",
-				OtelEndpoint:   "localhost:4318",
+				OtelEndpoint:   "http://localhost:4318",
 				SendInterval:   10,
 			},
 			wantErr: false, // Should still work with empty service name
@@ -81,7 +81,7 @@ func TestOtelClient_CreateCounter(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 
@@ -136,7 +136,7 @@ func TestOtelClient_CreateGauge(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 
@@ -185,7 +185,7 @@ func TestOtelClient_CreateHistogram(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 
@@ -244,7 +244,7 @@ func TestCounter_Operations(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 
@@ -290,7 +290,7 @@ func TestGauge_Operations(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 
@@ -326,7 +326,7 @@ func TestHistogram_Operations(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 
@@ -363,7 +363,7 @@ func TestOtelClient_ForceFlush(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 
@@ -385,7 +385,7 @@ func TestOtelClient_Close(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 		EnableDebug:    true,
 	}
@@ -465,7 +465,7 @@ func TestOtelClientConcurrency(t *testing.T) {
 		ServiceName:    "test-service",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		SendInterval:   10,
 	}
 

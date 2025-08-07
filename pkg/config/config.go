@@ -28,7 +28,7 @@ type Config struct {
 // Default returns a new Config with default values
 func Default() *Config {
 	return &Config{
-		OtelEndpoint:   "localhost:4318",
+		OtelEndpoint:   "http://localhost:4318",
 		ServiceName:    "gotel-app",
 		ServiceVersion: "1.0.0",
 		Environment:    "local",

@@ -90,12 +90,8 @@ func NewOtelClient(cfg *config.Config) (OTelClient, error) {
 
 	// Configure exporter options with sensible defaults
 	opts := []otlpmetrichttp.Option{
-		otlpmetrichttp.WithEndpoint(cfg.OtelEndpoint),
+		otlpmetrichttp.WithEndpointURL(cfg.OtelEndpoint),
 		otlpmetrichttp.WithTimeout(30 * time.Second), // Default timeout
-	}
-
-	if cfg.Environment == "local" {
-		opts = append(opts, otlpmetrichttp.WithInsecure())
 	}
 
 	// Create OTLP exporter
