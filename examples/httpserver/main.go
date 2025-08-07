@@ -9,9 +9,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/swagftw/gotel"
-	"github.com/swagftw/gotel/pkg/config"
-	"github.com/swagftw/gotel/pkg/metrics"
+	"github.com/GetSimpl/gotel"
+	"github.com/GetSimpl/gotel/pkg/config"
+	"github.com/GetSimpl/gotel/pkg/metrics"
 )
 
 func main() {

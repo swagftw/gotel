@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/swagftw/gotel/pkg/client"
+	"github.com/GetSimpl/gotel/pkg/client"
 )
 
 var (
