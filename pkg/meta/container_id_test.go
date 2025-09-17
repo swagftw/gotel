@@ -1,4 +1,4 @@
-package container_id
+package meta
 
 import (
 	"encoding/json"
@@ -10,9 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/GetSimpl/gotel/pkg/logger"
 )
 
-func TestGetcontainer_id(t *testing.T) {
+func TestGetContainerID(t *testing.T) {
 	tests := []struct {
 		name                   string
 		ecsMetadataURI         string
@@ -95,7 +96,7 @@ func TestGetcontainer_id(t *testing.T) {
 			}
 
 			// Execute the function
-			container_id := Getcontainer_id()
+			container_id := GetContainerID()
 
 			// Assertions
 			require.NotEmpty(t, container_id, "Container ID should not be empty")
@@ -112,7 +113,9 @@ func TestGetcontainer_id(t *testing.T) {
 	}
 }
 
-func TestFetchECScontainer_id(t *testing.T) {
+func TestFetchECSContainerID(t *testing.T) {
+	logger.InitLogger()
+
 	tests := []struct {
 		name           string
 		mockResponse   func(w http.ResponseWriter, r *http.Request)
@@ -164,19 +167,19 @@ func TestFetchECScontainer_id(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(tt.mockResponse))
 			defer server.Close()
 
-			result := fetchECScontainer_id(server.URL)
+			result := fetchECSContainerID(server.URL)
 			assert.Equal(t, tt.expectedResult, result)
 		})
 	}
 
 	// Test invalid URL
 	t.Run("invalid URL", func(t *testing.T) {
-		result := fetchECScontainer_id("invalid-url")
+		result := fetchECSContainerID("invalid-url")
 		assert.Empty(t, result)
 	})
 }
 
-func TestGenerateRandomcontainer_id(t *testing.T) {
+func TestGenerateRandomContainerID(t *testing.T) {
 	tests := []struct {
 		name string
 	}{
@@ -186,7 +189,7 @@ func TestGenerateRandomcontainer_id(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id := generateRandomcontainer_id()
+			id := generateRandomContainerID()
 
 			assert.True(t, strings.HasPrefix(id, "random-"),
 				"Expected random- prefix, got %s", id)
@@ -194,14 +197,14 @@ func TestGenerateRandomcontainer_id(t *testing.T) {
 				"Expected 43 characters, got %d", len(id))
 
 			// Test uniqueness by generating another ID
-			id2 := generateRandomcontainer_id()
+			id2 := generateRandomContainerID()
 			assert.NotEqual(t, id, id2,
 				"Expected unique IDs, got duplicate: %s", id)
 		})
 	}
 }
 
-func TestGetcontainer_id_ECSIntegration(t *testing.T) {
+func TestGetContainerID_ECSIntegration(t *testing.T) {
 	tests := []struct {
 		name           string
 		mockResponse   func(w http.ResponseWriter, r *http.Request)
@@ -252,7 +255,7 @@ func TestGetcontainer_id_ECSIntegration(t *testing.T) {
 			os.Setenv("ECS_CONTAINER_METADATA_URI_V4", server.URL)
 			os.Setenv("HOSTNAME", tt.hostname)
 
-			id := Getcontainer_id()
+			id := GetContainerID()
 			assert.Equal(t, tt.expectedResult, id)
 		})
 	}

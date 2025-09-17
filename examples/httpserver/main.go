@@ -2,7 +2,6 @@ package main
 
 import (
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -12,9 +11,15 @@ import (
 	"github.com/GetSimpl/gotel"
 	"github.com/GetSimpl/gotel/pkg/config"
 	"github.com/GetSimpl/gotel/pkg/metrics"
+	"flag"
+	"fmt"
+	"math/rand"
 )
 
 func main() {
+	port := flag.Int("port", 8080, "port of the server")
+	flag.Parse()
+
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		slog.Error("failed to load config", "err", err)
@@ -67,7 +72,7 @@ func main() {
 		context.Status(http.StatusOK)
 	})
 
-	err = svr.Run(":4000")
+	err = svr.Run(fmt.Sprintf(":%d", *port))
 	if err != nil {
 		slog.Error("failed to start server", "err", err)
 		return

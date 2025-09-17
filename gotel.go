@@ -10,7 +10,7 @@ import (
 
 	"github.com/GetSimpl/gotel/pkg/client"
 	"github.com/GetSimpl/gotel/pkg/config"
-	"github.com/GetSimpl/gotel/pkg/container_id"
+	"github.com/GetSimpl/gotel/pkg/meta"
 	"github.com/GetSimpl/gotel/pkg/logger"
 	"github.com/GetSimpl/gotel/pkg/metrics"
 )
@@ -22,7 +22,7 @@ type gotel struct {
 	metricsRegistry metrics.Registry
 	ctx             context.Context
 	cancel          context.CancelFunc
-	container_id    string // Cached container ID for automatic labeling
+	containerID     string // Cached container ID for automatic labeling
 }
 
 type Gotel interface {
@@ -60,18 +60,18 @@ func New(cfg *config.Config) (Gotel, error) {
 	registry := metrics.NewRegistry(otelClient, ctx)
 
 	// Get container ID once during initialization
-	container_id := container_id.Getcontainer_id()
+	containerID := meta.GetContainerID()
 
 	g := &gotel{
 		config:          cfg,
 		metricsRegistry: registry,
 		ctx:             ctx,
 		cancel:          cancel,
-		container_id:    container_id,
+		containerID:     containerID,
 	}
 
 	if cfg.EnableDebug {
-		logger.Logger.Info("gotel client initialized", "endpoint", cfg.OtelEndpoint, "container_id", container_id)
+		logger.Logger.Info("gotel client initialized", "endpoint", cfg.OtelEndpoint, "containerID", containerID)
 		logger.Logger.Info("OTEL SDK will automatically batch and send metrics")
 	}
 
@@ -129,7 +129,7 @@ func (g *gotel) addDefaultLabels(labels map[string]string) map[string]string {
 	// Add default labels for service, environment, and container
 	labelsCopy["service.name"] = g.config.ServiceName
 	labelsCopy["environment"] = g.config.Environment
-	labelsCopy["container_id"] = g.container_id
+	labelsCopy["container.id"] = g.containerID
 
 	return labelsCopy
 }
