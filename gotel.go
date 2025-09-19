@@ -10,8 +10,9 @@ import (
 
 	"github.com/GetSimpl/gotel/pkg/client"
 	"github.com/GetSimpl/gotel/pkg/config"
-	"github.com/GetSimpl/gotel/pkg/metrics"
+	"github.com/GetSimpl/gotel/pkg/meta"
 	"github.com/GetSimpl/gotel/pkg/logger"
+	"github.com/GetSimpl/gotel/pkg/metrics"
 )
 
 // gotel is the main client for sending metrics to OpenTelemetry Collector
@@ -21,6 +22,7 @@ type gotel struct {
 	metricsRegistry metrics.Registry
 	ctx             context.Context
 	cancel          context.CancelFunc
+	containerID     string // Cached container ID for automatic labeling
 }
 
 type Gotel interface {
@@ -57,15 +59,19 @@ func New(cfg *config.Config) (Gotel, error) {
 	// Create metrics registry with OTEL client
 	registry := metrics.NewRegistry(otelClient, ctx)
 
+	// Get container ID once during initialization
+	containerID := meta.GetContainerID()
+
 	g := &gotel{
 		config:          cfg,
 		metricsRegistry: registry,
 		ctx:             ctx,
 		cancel:          cancel,
+		containerID:     containerID,
 	}
 
 	if cfg.EnableDebug {
-		logger.Logger.Info("gotel client initialized", "endpoint", cfg.OtelEndpoint)
+		logger.Logger.Info("gotel client initialized", "endpoint", cfg.OtelEndpoint, "containerID", containerID)
 		logger.Logger.Info("OTEL SDK will automatically batch and send metrics")
 	}
 
@@ -115,14 +121,15 @@ func (g *gotel) RecordHistogram(value float64, name metrics.MetricName, unit met
 }
 
 func (g *gotel) addDefaultLabels(labels map[string]string) map[string]string {
-	labelsCopy := make(map[string]string, len(labels)+2)
+	labelsCopy := make(map[string]string, len(labels)+3)
 	for k, v := range labels {
 		labelsCopy[k] = v
 	}
 
-	// Add default labels for service and environment
+	// Add default labels for service, environment, and container
 	labelsCopy["service.name"] = g.config.ServiceName
 	labelsCopy["environment"] = g.config.Environment
+	labelsCopy["container.id"] = g.containerID
 
 	return labelsCopy
 }
