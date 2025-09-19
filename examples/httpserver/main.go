@@ -1,7 +1,10 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -11,9 +14,6 @@ import (
 	"github.com/GetSimpl/gotel"
 	"github.com/GetSimpl/gotel/pkg/config"
 	"github.com/GetSimpl/gotel/pkg/metrics"
-	"flag"
-	"fmt"
-	"math/rand"
 )
 
 func main() {
